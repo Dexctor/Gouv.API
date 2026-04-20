@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// AUTH (NextAuth v5 avec Prisma Adapter)
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts   Account[]
+  sessions   Session[]
+  prospects  Prospect[]    @relation("AssignedTo")
+  activities Activity[]
+  searches   SavedSearch[]
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================
+// DOMAIN : PROSPECTS & PIPELINE
+// ============================================
+
+model Prospect {
+  id            String  @id @default(cuid())
+  siren         String  @unique
+  siret         String?
+  denomination  String
+  nomCommercial String?
+
+  // Adresse
+  adresse    String?
+  codePostal String?
+  ville      String?
+  latitude   Float?
+  longitude  Float?
+
+  // Activité
+  codeNaf           String?
+  libelleNaf        String?
+  trancheEffectif   String?
+  dateCreation      DateTime?
+  formeJuridique    String?
+  etatAdministratif String?
+
+  // Web / contact
+  siteWeb   String?
+  email     String?
+  telephone String?
+
+  // Pipeline
+  stage    PipelineStage @default(A_QUALIFIER)
+  priority Priority      @default(MEDIUM)
+  notes    String?       @db.Text
+
+  // Assignation
+  assignedToId String?
+  assignedTo   User?   @relation("AssignedTo", fields: [assignedToId], references: [id])
+
+  // Métadonnées
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastContactedAt DateTime?
+
+  // Relations
+  activities Activity[]
+  financials Financial[]
+  tags       Tag[]       @relation("ProspectTags")
+
+  @@index([stage])
+  @@index([codePostal])
+  @@index([codeNaf])
+  @@index([assignedToId])
+}
+
+enum PipelineStage {
+  A_QUALIFIER
+  CONTACTE
+  RDV
+  PROPOSITION
+  SIGNE
+  PERDU
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Activity {
+  id         String       @id @default(cuid())
+  prospectId String
+  prospect   Prospect     @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation(fields: [userId], references: [id])
+  type       ActivityType
+  content    String       @db.Text
+  createdAt  DateTime     @default(now())
+
+  @@index([prospectId])
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL
+  MEETING
+  STAGE_CHANGE
+  SYSTEM
+}
+
+model Tag {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  color     String     @default("#6366f1")
+  prospects Prospect[] @relation("ProspectTags")
+}
+
+model SavedSearch {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  filters   Json
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ============================================
+// DONNÉES FINANCIÈRES INGÉRÉES (BCE/INPI)
+// ============================================
+
+model Financial {
+  id              String   @id @default(cuid())
+  siren           String
+  dateCloture     DateTime
+  chiffreAffaires Float?
+  margeBrute      Float?
+  ebe             Float?
+  resultatNet     Float?
+  typeBilan       String?
+
+  prospectId String?
+  prospect   Prospect? @relation(fields: [prospectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([siren, dateCloture])
+  @@index([siren])
+}
+
+// Index pour enrichir rapidement les résultats de recherche sans avoir à
+// créer un Prospect. Alimenté par le worker d'ingestion BCE/INPI.
+model FinancialCache {
+  siren            String    @id
+  dernierCA        Float?
+  derniereMarge    Float?
+  dernierEBE       Float?
+  dernierResultat  Float?
+  dateDernierBilan DateTime?
+  updatedAt        DateTime  @updatedAt
+}
+
+// ============================================
+// CACHE BODACC (événements entreprises)
+// ============================================
+
+model BodaccEvent {
+  id          String   @id @default(cuid())
+  siren       String
+  publication String
+  type        String
+  content     String   @db.Text
+  date        DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([siren])
+  @@index([date])
+}
