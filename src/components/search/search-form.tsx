@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   useQueryState,
   useQueryStates,
@@ -55,37 +56,70 @@ export const searchParsers = {
   page: parseAsInteger.withDefault(1),
 };
 
+// Option par défaut : écritures nuqs en "shallow" (pas de re-render serveur pendant la frappe).
+// Le click "Rechercher" force shallow:false pour déclencher le Server Component.
+const SHALLOW = { shallow: true } as const;
+const COMMIT = { shallow: false } as const;
+
 export function SearchForm() {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [q, setQ] = useQueryState("q", searchParsers.q);
-  const [cp, setCp] = useQueryState("cp", searchParsers.cp);
-  const [naf, setNaf] = useQueryState("naf", searchParsers.naf);
-  const [effectif, setEffectif] = useQueryState("effectif", searchParsers.effectif);
-  const [forme, setForme] = useQueryState("forme", searchParsers.forme);
-  const [etat, setEtat] = useQueryState("etat", searchParsers.etat);
-  const [, setPage] = useQueryState("page", searchParsers.page);
+  const [q, setQ] = useQueryState("q", searchParsers.q.withOptions(SHALLOW));
+  const [cp, setCp] = useQueryState(
+    "cp",
+    searchParsers.cp.withOptions(SHALLOW)
+  );
+  const [naf, setNaf] = useQueryState(
+    "naf",
+    searchParsers.naf.withOptions(SHALLOW)
+  );
+  const [effectif, setEffectif] = useQueryState(
+    "effectif",
+    searchParsers.effectif.withOptions(SHALLOW)
+  );
+  const [forme, setForme] = useQueryState(
+    "forme",
+    searchParsers.forme.withOptions(SHALLOW)
+  );
+  const [etat, setEtat] = useQueryState(
+    "etat",
+    searchParsers.etat.withOptions(SHALLOW)
+  );
+  const [, setPage] = useQueryState(
+    "page",
+    searchParsers.page.withOptions(COMMIT)
+  );
 
-  // État local miroir (pour ne pas polluer l'URL à chaque frappe)
-  const [localQ, setLocalQ] = [q, setQ];
-  const [localCp, setLocalCp] = [cp, setCp];
-  const [localNaf, setLocalNaf] = [naf, setNaf];
-
+  // Soumission : on force l'écriture URL avec shallow:false + un refresh pour
+  // redéclencher le Server Component Results.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    startTransition(() => {
-      void setPage(1);
+    startTransition(async () => {
+      await Promise.all([
+        setQ(q || null, COMMIT),
+        setCp(cp || null, COMMIT),
+        setNaf(naf.length ? naf : null, COMMIT),
+        setEffectif(effectif.length ? effectif : null, COMMIT),
+        setForme(forme || null, COMMIT),
+        setEtat(etat, COMMIT),
+        setPage(1, COMMIT),
+      ]);
+      router.refresh();
     });
   };
 
   const reset = () => {
-    startTransition(() => {
-      void setQ("");
-      void setCp("");
-      void setNaf([]);
-      void setEffectif([]);
-      void setForme("");
-      void setEtat("A");
-      void setPage(1);
+    startTransition(async () => {
+      await Promise.all([
+        setQ(null, COMMIT),
+        setCp(null, COMMIT),
+        setNaf(null, COMMIT),
+        setEffectif(null, COMMIT),
+        setForme(null, COMMIT),
+        setEtat("A", COMMIT),
+        setPage(1, COMMIT),
+      ]);
+      router.refresh();
     });
   };
 
@@ -101,8 +135,8 @@ export function SearchForm() {
             id="q"
             name="q"
             placeholder="Dénomination, SIREN, dirigeant..."
-            value={localQ}
-            onChange={(e) => void setLocalQ(e.target.value || null)}
+            value={q}
+            onChange={(e) => void setQ(e.target.value || null)}
           />
         </div>
         <div className="space-y-1">
@@ -113,8 +147,8 @@ export function SearchForm() {
             inputMode="numeric"
             maxLength={5}
             placeholder="59140"
-            value={localCp}
-            onChange={(e) => void setLocalCp(e.target.value || null)}
+            value={cp}
+            onChange={(e) => void setCp(e.target.value || null)}
           />
         </div>
         <div className="space-y-1">
@@ -123,9 +157,9 @@ export function SearchForm() {
             id="naf"
             name="naf"
             placeholder="56.10A"
-            value={localNaf[0] ?? ""}
+            value={naf[0] ?? ""}
             onChange={(e) =>
-              void setLocalNaf(e.target.value ? ([e.target.value] as string[]) : [])
+              void setNaf(e.target.value ? ([e.target.value] as string[]) : [])
             }
           />
         </div>
