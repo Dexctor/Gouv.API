@@ -6,6 +6,7 @@ import {
   searchCompanies,
   type SearchFilters,
   type CompanyResult,
+  getLastCA,
 } from "@/lib/api/recherche-entreprises";
 
 export interface EnrichedCompany extends CompanyResult {
@@ -17,6 +18,7 @@ export interface EnrichedCompany extends CompanyResult {
     dateDernierBilan: Date | null;
   } | null;
   alreadyInPipeline?: boolean;
+  lastCA?: { year: string; ca: number | null; resultat_net: number | null } | null;
 }
 
 export interface SearchActionResult {
@@ -41,7 +43,6 @@ export async function searchAction(
     const raw = await searchCompanies(filters);
     const sirens = raw.results.map((r) => r.siren);
 
-    // Enrichissement en parallèle : cache financier + présence pipeline.
     const [cached, existingProspects] = await Promise.all([
       sirens.length
         ? prisma.financialCache.findMany({ where: { siren: { in: sirens } } })
@@ -61,6 +62,7 @@ export async function searchAction(
       ...r,
       cache: cacheBySiren.get(r.siren) ?? null,
       alreadyInPipeline: pipelineSet.has(r.siren),
+      lastCA: getLastCA(r),
     }));
 
     return {

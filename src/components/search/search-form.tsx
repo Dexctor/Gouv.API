@@ -4,11 +4,11 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   useQueryState,
-  useQueryStates,
   parseAsString,
   parseAsArrayOf,
   parseAsInteger,
   parseAsStringLiteral,
+  parseAsBoolean,
 } from "nuqs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,58 +20,74 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Search, RotateCcw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Search, RotateCcw, SlidersHorizontal } from "lucide-react";
+import {
+  TRANCHE_EFFECTIF_LABELS,
+  NAF_SECTIONS,
+  NATURE_JURIDIQUE_LABELS,
+} from "@/lib/insee-labels";
 
-const TRANCHES_EFFECTIF = [
-  { value: "00", label: "0 salarié" },
-  { value: "01", label: "1-2 salariés" },
-  { value: "02", label: "3-5 salariés" },
-  { value: "03", label: "6-9 salariés" },
-  { value: "11", label: "10-19 salariés" },
-  { value: "12", label: "20-49 salariés" },
-  { value: "21", label: "50-99 salariés" },
-  { value: "22", label: "100-199 salariés" },
-  { value: "31", label: "200-249 salariés" },
-  { value: "32", label: "250-499 salariés" },
-];
-
-const FORMES_JURIDIQUES = [
-  { value: "5710", label: "SAS" },
-  { value: "5499", label: "SARL" },
-  { value: "5498", label: "EURL" },
-  { value: "5599", label: "SA" },
-  { value: "1000", label: "Entrepreneur individuel" },
-  { value: "6540", label: "SCI" },
-];
-
-const ETATS = ["A", "F"] as const;
+const ETATS = ["A", "C"] as const;
+const CATEGORIES = ["PME", "ETI", "GE"] as const;
 
 export const searchParsers = {
   q: parseAsString.withDefault(""),
   cp: parseAsString.withDefault(""),
   naf: parseAsArrayOf(parseAsString).withDefault([]),
+  section: parseAsString.withDefault(""),
   effectif: parseAsArrayOf(parseAsString).withDefault([]),
   forme: parseAsString.withDefault(""),
   etat: parseAsStringLiteral(ETATS).withDefault("A"),
+  categorie: parseAsArrayOf(parseAsStringLiteral(CATEGORIES)).withDefault([]),
+  caMin: parseAsInteger.withDefault(0),
+  caMax: parseAsInteger.withDefault(0),
+  rge: parseAsBoolean.withDefault(false),
+  qualiopi: parseAsBoolean.withDefault(false),
+  bio: parseAsBoolean.withDefault(false),
+  ess: parseAsBoolean.withDefault(false),
   page: parseAsInteger.withDefault(1),
 };
 
-// Option par défaut : écritures nuqs en "shallow" (pas de re-render serveur pendant la frappe).
-// Le click "Rechercher" force shallow:false pour déclencher le Server Component.
 const SHALLOW = { shallow: true } as const;
 const COMMIT = { shallow: false } as const;
+
+// Parse "1500000", "1.5M", "1,5M", "500k"
+function parseAmount(input: string): number | null {
+  if (!input.trim()) return null;
+  const cleaned = input.trim().toLowerCase().replace(/\s/g, "").replace(",", ".");
+  const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*([kmb])?$/i);
+  if (!match) return null;
+  const n = parseFloat(match[1]);
+  if (Number.isNaN(n)) return null;
+  const unit = (match[2] ?? "").toLowerCase();
+  const mult = unit === "k" ? 1e3 : unit === "m" ? 1e6 : unit === "b" ? 1e9 : 1;
+  return Math.round(n * mult);
+}
+
+function formatAmount(n: number): string {
+  if (!n) return "";
+  if (n >= 1e6) return `${(n / 1e6).toString().replace(".", ",")}M`;
+  if (n >= 1e3) return `${(n / 1e3).toString().replace(".", ",")}k`;
+  return String(n);
+}
 
 export function SearchForm() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
   const [q, setQ] = useQueryState("q", searchParsers.q.withOptions(SHALLOW));
-  const [cp, setCp] = useQueryState(
-    "cp",
-    searchParsers.cp.withOptions(SHALLOW)
-  );
-  const [naf, setNaf] = useQueryState(
-    "naf",
-    searchParsers.naf.withOptions(SHALLOW)
+  const [cp, setCp] = useQueryState("cp", searchParsers.cp.withOptions(SHALLOW));
+  const [naf, setNaf] = useQueryState("naf", searchParsers.naf.withOptions(SHALLOW));
+  const [section, setSection] = useQueryState(
+    "section",
+    searchParsers.section.withOptions(SHALLOW)
   );
   const [effectif, setEffectif] = useQueryState(
     "effectif",
@@ -85,13 +101,50 @@ export function SearchForm() {
     "etat",
     searchParsers.etat.withOptions(SHALLOW)
   );
+  const [categorie, setCategorie] = useQueryState(
+    "categorie",
+    searchParsers.categorie.withOptions(SHALLOW)
+  );
+  const [caMin, setCaMin] = useQueryState(
+    "caMin",
+    searchParsers.caMin.withOptions(SHALLOW)
+  );
+  const [caMax, setCaMax] = useQueryState(
+    "caMax",
+    searchParsers.caMax.withOptions(SHALLOW)
+  );
+  const [rge, setRge] = useQueryState(
+    "rge",
+    searchParsers.rge.withOptions(SHALLOW)
+  );
+  const [qualiopi, setQualiopi] = useQueryState(
+    "qualiopi",
+    searchParsers.qualiopi.withOptions(SHALLOW)
+  );
+  const [bio, setBio] = useQueryState(
+    "bio",
+    searchParsers.bio.withOptions(SHALLOW)
+  );
+  const [ess, setEss] = useQueryState(
+    "ess",
+    searchParsers.ess.withOptions(SHALLOW)
+  );
   const [, setPage] = useQueryState(
     "page",
     searchParsers.page.withOptions(COMMIT)
   );
 
-  // Soumission : on force l'écriture URL avec shallow:false + un refresh pour
-  // redéclencher le Server Component Results.
+  const activeFilterCount =
+    Number(!!section) +
+    Number(!!forme) +
+    Number(categorie.length > 0) +
+    Number(caMin > 0) +
+    Number(caMax > 0) +
+    Number(rge) +
+    Number(qualiopi) +
+    Number(bio) +
+    Number(ess);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     startTransition(async () => {
@@ -99,9 +152,20 @@ export function SearchForm() {
         setQ(q || null, COMMIT),
         setCp(cp || null, COMMIT),
         setNaf(naf.length ? naf : null, COMMIT),
+        setSection(section || null, COMMIT),
         setEffectif(effectif.length ? effectif : null, COMMIT),
         setForme(forme || null, COMMIT),
         setEtat(etat, COMMIT),
+        setCategorie(
+          categorie.length ? (categorie as (typeof CATEGORIES)[number][]) : null,
+          COMMIT
+        ),
+        setCaMin(caMin || null, COMMIT),
+        setCaMax(caMax || null, COMMIT),
+        setRge(rge || null, COMMIT),
+        setQualiopi(qualiopi || null, COMMIT),
+        setBio(bio || null, COMMIT),
+        setEss(ess || null, COMMIT),
         setPage(1, COMMIT),
       ]);
       router.refresh();
@@ -114,13 +178,28 @@ export function SearchForm() {
         setQ(null, COMMIT),
         setCp(null, COMMIT),
         setNaf(null, COMMIT),
+        setSection(null, COMMIT),
         setEffectif(null, COMMIT),
         setForme(null, COMMIT),
         setEtat("A", COMMIT),
+        setCategorie(null, COMMIT),
+        setCaMin(null, COMMIT),
+        setCaMax(null, COMMIT),
+        setRge(null, COMMIT),
+        setQualiopi(null, COMMIT),
+        setBio(null, COMMIT),
+        setEss(null, COMMIT),
         setPage(1, COMMIT),
       ]);
       router.refresh();
     });
+  };
+
+  const toggleCategorie = (cat: (typeof CATEGORIES)[number]) => {
+    const next = categorie.includes(cat)
+      ? categorie.filter((c) => c !== cat)
+      : [...categorie, cat];
+    void setCategorie(next as (typeof CATEGORIES)[number][]);
   };
 
   return (
@@ -128,6 +207,7 @@ export function SearchForm() {
       onSubmit={handleSubmit}
       className="grid gap-4 rounded-lg border border-border/60 bg-card/40 p-4"
     >
+      {/* Ligne 1 : recherche principale */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
         <div className="space-y-1 md:col-span-2">
           <Label htmlFor="q">Recherche textuelle</Label>
@@ -176,9 +256,9 @@ export function SearchForm() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Toutes</SelectItem>
-              {TRANCHES_EFFECTIF.map((t) => (
-                <SelectItem key={t.value} value={t.value}>
-                  {t.label}
+              {Object.entries(TRANCHE_EFFECTIF_LABELS).map(([code, label]) => (
+                <SelectItem key={code} value={code}>
+                  {label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -186,57 +266,204 @@ export function SearchForm() {
         </div>
         <div className="space-y-1">
           <Label htmlFor="etat">État</Label>
-          <Select value={etat} onValueChange={(v) => void setEtat(v as "A" | "F")}>
+          <Select
+            value={etat}
+            onValueChange={(v) => void setEtat(v as "A" | "C")}
+          >
             <SelectTrigger id="etat">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="A">Actif</SelectItem>
-              <SelectItem value="F">Fermé</SelectItem>
+              <SelectItem value="A">Active</SelectItem>
+              <SelectItem value="C">Cessée</SelectItem>
             </SelectContent>
           </Select>
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-        <div className="space-y-1 md:col-span-2">
-          <Label htmlFor="forme">Forme juridique</Label>
-          <Select
-            value={forme || "all"}
-            onValueChange={(v) => void setForme(v === "all" ? "" : v)}
-          >
-            <SelectTrigger id="forme">
-              <SelectValue placeholder="Toutes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Toutes</SelectItem>
-              {FORMES_JURIDIQUES.map((f) => (
-                <SelectItem key={f.value} value={f.value}>
-                  {f.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-end gap-2 md:col-span-4 md:justify-end">
-          <Button type="button" variant="outline" onClick={reset} disabled={isPending}>
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Réinitialiser
-          </Button>
-          <Button type="submit" disabled={isPending}>
-            {isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Search className="mr-2 h-4 w-4" />
-            )}
-            Rechercher
-          </Button>
-        </div>
+
+      {/* Ligne 2 : filtres avancés + actions */}
+      <div className="flex flex-wrap items-end gap-2">
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button type="button" variant="outline" size="sm">
+                <SlidersHorizontal className="mr-2 h-4 w-4" />
+                Filtres avancés
+                {activeFilterCount > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="ml-2 h-5 px-1.5 text-[10px]"
+                  >
+                    {activeFilterCount}
+                  </Badge>
+                )}
+              </Button>
+            }
+          />
+          <PopoverContent className="w-96 p-4" align="start">
+            <div className="grid gap-4">
+              <div className="space-y-1">
+                <Label className="text-xs">Catégorie d&apos;entreprise</Label>
+                <div className="flex gap-1">
+                  {CATEGORIES.map((c) => (
+                    <Button
+                      type="button"
+                      key={c}
+                      size="xs"
+                      variant={categorie.includes(c) ? "default" : "outline"}
+                      onClick={() => toggleCategorie(c)}
+                    >
+                      {c}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label htmlFor="caMin" className="text-xs">
+                    CA minimum
+                  </Label>
+                  <Input
+                    id="caMin"
+                    placeholder="300k, 1M, 5M..."
+                    defaultValue={formatAmount(caMin)}
+                    onBlur={(e) => {
+                      const n = parseAmount(e.target.value);
+                      void setCaMin(n ?? 0);
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="caMax" className="text-xs">
+                    CA maximum
+                  </Label>
+                  <Input
+                    id="caMax"
+                    placeholder="10M, 100M..."
+                    defaultValue={formatAmount(caMax)}
+                    onBlur={(e) => {
+                      const n = parseAmount(e.target.value);
+                      void setCaMax(n ?? 0);
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="section" className="text-xs">
+                  Section NAF
+                </Label>
+                <Select
+                  value={section || "all"}
+                  onValueChange={(v) => void setSection(v === "all" ? "" : v)}
+                >
+                  <SelectTrigger id="section">
+                    <SelectValue placeholder="Toutes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes</SelectItem>
+                    {NAF_SECTIONS.map((s) => (
+                      <SelectItem key={s.code} value={s.code}>
+                        {s.code} — {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="forme" className="text-xs">
+                  Forme juridique
+                </Label>
+                <Select
+                  value={forme || "all"}
+                  onValueChange={(v) => void setForme(v === "all" ? "" : v)}
+                >
+                  <SelectTrigger id="forme">
+                    <SelectValue placeholder="Toutes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes</SelectItem>
+                    {Object.entries(NATURE_JURIDIQUE_LABELS).map(([code, label]) => (
+                      <SelectItem key={code} value={code}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs">Labels qualité</Label>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <CheckboxRow
+                    checked={rge}
+                    onCheckedChange={(v) => void setRge(v || null)}
+                    label="RGE (BTP)"
+                  />
+                  <CheckboxRow
+                    checked={qualiopi}
+                    onCheckedChange={(v) => void setQualiopi(v || null)}
+                    label="Qualiopi"
+                  />
+                  <CheckboxRow
+                    checked={bio}
+                    onCheckedChange={(v) => void setBio(v || null)}
+                    label="Bio"
+                  />
+                  <CheckboxRow
+                    checked={ess}
+                    onCheckedChange={(v) => void setEss(v || null)}
+                    label="ESS"
+                  />
+                </div>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        <div className="flex-1" />
+
+        <Button
+          type="button"
+          variant="outline"
+          onClick={reset}
+          disabled={isPending}
+          size="sm"
+        >
+          <RotateCcw className="mr-2 h-4 w-4" />
+          Réinitialiser
+        </Button>
+        <Button type="submit" disabled={isPending} size="sm">
+          {isPending ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Search className="mr-2 h-4 w-4" />
+          )}
+          Rechercher
+        </Button>
       </div>
     </form>
   );
 }
 
-// Re-export pour consommation côté serveur
-export function useSearchFilters() {
-  return useQueryStates(searchParsers);
+function CheckboxRow({
+  checked,
+  onCheckedChange,
+  label,
+}: {
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(v) => onCheckedChange(v === true)}
+      />
+      <span>{label}</span>
+    </label>
+  );
 }

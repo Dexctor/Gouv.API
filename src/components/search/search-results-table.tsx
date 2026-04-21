@@ -19,26 +19,64 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Copy, ExternalLink, Plus, Check, Loader2 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Copy, Plus, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { addToPipelineAction } from "@/actions/prospects";
 import type { EnrichedCompany } from "@/actions/search";
-
-const euro = new Intl.NumberFormat("fr-FR", {
-  style: "currency",
-  currency: "EUR",
-  maximumFractionDigits: 0,
-});
-
-function formatMoney(value: number | null | undefined): string {
-  if (value == null) return "—";
-  return euro.format(value);
-}
+import {
+  trancheEffectifLabel,
+  formatCompactEuro,
+  CATEGORIE_ENTREPRISE_LABELS,
+} from "@/lib/insee-labels";
 
 function age(dateCreation?: string | null) {
   if (!dateCreation) return "—";
   const y = differenceInYears(new Date(), new Date(dateCreation));
   return `${y} an${y > 1 ? "s" : ""}`;
+}
+
+// Pastilles labels (RGE / Qualiopi / Bio / ESS)
+function LabelPill({
+  label,
+  color,
+}: {
+  label: string;
+  color: "green" | "blue" | "amber" | "violet";
+}) {
+  const classes = {
+    green: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+    blue: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+    amber: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+    violet: "bg-violet-500/10 text-violet-400 border-violet-500/30",
+  }[color];
+  return (
+    <span
+      className={`inline-flex h-4 items-center rounded border px-1 text-[10px] font-medium ${classes}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function CompanyLabels({ c }: { c: EnrichedCompany }) {
+  const co = c.complements;
+  if (!co) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {co.est_rge && <LabelPill label="RGE" color="green" />}
+      {co.est_qualiopi && <LabelPill label="Qualiopi" color="blue" />}
+      {co.est_bio && <LabelPill label="Bio" color="green" />}
+      {co.est_ess && <LabelPill label="ESS" color="violet" />}
+      {co.est_siae && <LabelPill label="SIAE" color="violet" />}
+      {co.est_societe_mission && <LabelPill label="Mission" color="amber" />}
+      {co.est_service_public && <LabelPill label="Service public" color="blue" />}
+    </div>
+  );
 }
 
 const col = createColumnHelper<EnrichedCompany>();
@@ -51,16 +89,27 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
     () => [
       col.accessor("nom_complet", {
         header: "Dénomination",
-        cell: (info) => (
-          <div className="font-medium">
-            {info.getValue()}
-            {info.row.original.etat_administratif === "F" && (
-              <Badge variant="secondary" className="ml-2">
-                Fermé
-              </Badge>
-            )}
-          </div>
-        ),
+        cell: (info) => {
+          const r = info.row.original;
+          return (
+            <div className="min-w-[14rem]">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{info.getValue()}</span>
+                {r.etat_administratif === "C" && (
+                  <Badge variant="secondary">Cessée</Badge>
+                )}
+                {r.categorie_entreprise && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {CATEGORIE_ENTREPRISE_LABELS[r.categorie_entreprise]}
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-0.5">
+                <CompanyLabels c={r} />
+              </div>
+            </div>
+          );
+        },
       }),
       col.accessor("siren", {
         header: "SIREN",
@@ -71,9 +120,11 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
         header: "Ville",
         cell: ({ row }) => {
           const s = row.original.siege;
+          const ville = s?.libelle_commune ?? s?.commune ?? "—";
           return (
             <span className="text-sm text-muted-foreground">
-              {s?.commune ?? "—"} {s?.code_postal ? `(${s.code_postal})` : ""}
+              {ville}
+              {s?.code_postal ? ` (${s.code_postal})` : ""}
             </span>
           );
         },
@@ -81,44 +132,96 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
       col.accessor("activite_principale", {
         header: "NAF",
         cell: (info) => (
-          <span className="text-xs text-muted-foreground">
+          <span className="font-mono text-xs text-muted-foreground">
             {info.getValue() ?? "—"}
           </span>
         ),
       }),
-      col.accessor("tranche_effectif_salarie", {
+      col.display({
+        id: "effectif",
         header: "Effectif",
-        cell: (info) => info.getValue() ?? "—",
+        cell: ({ row }) => {
+          const r = row.original;
+          const code = r.tranche_effectif_salarie;
+          const year = r.annee_tranche_effectif_salarie;
+          return (
+            <Tooltip>
+              <TooltipTrigger>
+                <span className="text-xs">{trancheEffectifLabel(code)}</span>
+              </TooltipTrigger>
+              {year && (
+                <TooltipContent>Donnée INSEE {year}</TooltipContent>
+              )}
+            </Tooltip>
+          );
+        },
       }),
       col.display({
         id: "ca",
         header: "CA",
         cell: ({ row }) => {
-          const cache = row.original.cache;
-          const finances = row.original.finances;
-          const lastYear = finances
-            ? Object.keys(finances).sort().at(-1)
-            : undefined;
-          const ca =
-            cache?.dernierCA ??
-            (lastYear ? finances?.[lastYear]?.ca ?? null : null);
+          const r = row.original;
+          const ca = r.lastCA?.ca ?? r.cache?.dernierCA ?? null;
+          const year =
+            r.lastCA?.year ??
+            (r.cache?.dateDernierBilan
+              ? new Date(r.cache.dateDernierBilan).getFullYear().toString()
+              : null);
+          if (ca == null) {
+            return (
+              <Tooltip>
+                <TooltipTrigger>
+                  <span className="text-xs text-muted-foreground/60">
+                    N/C
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Entreprise n&apos;a pas publié ses comptes
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
           return (
-            <span className="tabular-nums">{formatMoney(ca ?? null)}</span>
+            <Tooltip>
+              <TooltipTrigger>
+                <span className="tabular-nums font-medium">
+                  {formatCompactEuro(ca)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                CA {year ?? "—"} — source INPI/BCE
+              </TooltipContent>
+            </Tooltip>
           );
         },
       }),
       col.display({
-        id: "ebe",
-        header: "EBE",
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {formatMoney(row.original.cache?.dernierEBE ?? null)}
-          </span>
-        ),
+        id: "rn",
+        header: "Résultat net",
+        cell: ({ row }) => {
+          const r = row.original;
+          const rn = r.lastCA?.resultat_net ?? r.cache?.dernierResultat ?? null;
+          if (rn == null) {
+            return <span className="text-xs text-muted-foreground/60">—</span>;
+          }
+          return (
+            <span
+              className={`tabular-nums text-xs ${
+                rn < 0 ? "text-red-400" : ""
+              }`}
+            >
+              {formatCompactEuro(rn)}
+            </span>
+          );
+        },
       }),
       col.accessor("date_creation", {
         header: "Âge",
-        cell: (info) => age(info.getValue()),
+        cell: (info) => (
+          <span className="text-xs text-muted-foreground">
+            {age(info.getValue())}
+          </span>
+        ),
       }),
       col.display({
         id: "actions",
@@ -226,15 +329,5 @@ function SirenCell({ siren }: { siren: string }) {
         <Copy className="h-3 w-3 opacity-60" />
       )}
     </button>
-  );
-}
-
-export function ExternalLinkButton({ url }: { url: string }) {
-  return (
-    <Button asChild size="sm" variant="ghost">
-      <a href={url} target="_blank" rel="noopener noreferrer">
-        <ExternalLink className="h-4 w-4" />
-      </a>
-    </Button>
   );
 }

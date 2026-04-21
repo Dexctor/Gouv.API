@@ -5,7 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { PipelineStage, Priority, ActivityType } from "@prisma/client";
-import { getCompanyBySiren } from "@/lib/api/recherche-entreprises";
+import {
+  getCompanyBySiren,
+  getLastCA,
+} from "@/lib/api/recherche-entreprises";
 
 type ActionResult<T = unknown> =
   | { success: true; data?: T }
@@ -41,15 +44,18 @@ export async function addToPipelineAction(
     }
 
     const siege = company.siege;
+    const lastCA = getLastCA(company);
+
     const prospect = await prisma.prospect.create({
       data: {
         siren: parsed.data,
         siret: siege?.siret,
         denomination: company.nom_complet,
-        nomCommercial: company.nom_raison_sociale,
+        nomCommercial:
+          siege?.nom_commercial ?? company.nom_raison_sociale ?? null,
         adresse: siege?.adresse,
         codePostal: siege?.code_postal,
-        ville: siege?.commune,
+        ville: siege?.libelle_commune ?? siege?.commune,
         latitude: siege?.latitude ? Number(siege.latitude) : undefined,
         longitude: siege?.longitude ? Number(siege.longitude) : undefined,
         codeNaf: company.activite_principale,
@@ -70,6 +76,51 @@ export async function addToPipelineAction(
         },
       },
     });
+
+    // Snapshot des finances dans FinancialCache + table Financial pour chaque année
+    if (company.finances) {
+      const entries = Object.entries(company.finances);
+      if (entries.length > 0) {
+        await Promise.all(
+          entries.map(([year, values]) => {
+            const dateCloture = new Date(`${year}-12-31`);
+            return prisma.financial.upsert({
+              where: {
+                siren_dateCloture: { siren: parsed.data, dateCloture },
+              },
+              update: {
+                chiffreAffaires: values?.ca ?? null,
+                resultatNet: values?.resultat_net ?? null,
+                prospectId: prospect.id,
+              },
+              create: {
+                siren: parsed.data,
+                dateCloture,
+                chiffreAffaires: values?.ca ?? null,
+                resultatNet: values?.resultat_net ?? null,
+                prospectId: prospect.id,
+              },
+            });
+          })
+        );
+      }
+      if (lastCA) {
+        await prisma.financialCache.upsert({
+          where: { siren: parsed.data },
+          update: {
+            dernierCA: lastCA.ca,
+            dernierResultat: lastCA.resultat_net,
+            dateDernierBilan: new Date(`${lastCA.year}-12-31`),
+          },
+          create: {
+            siren: parsed.data,
+            dernierCA: lastCA.ca,
+            dernierResultat: lastCA.resultat_net,
+            dateDernierBilan: new Date(`${lastCA.year}-12-31`),
+          },
+        });
+      }
+    }
 
     revalidatePath("/pipeline");
     revalidatePath("/search");

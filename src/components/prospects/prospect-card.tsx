@@ -27,6 +27,10 @@ import {
   deleteProspectAction,
 } from "@/actions/prospects";
 import { buildPappersUrl, buildAnnuaireUrl } from "@/lib/api/pappers-url";
+import {
+  trancheEffectifLabel,
+  natureJuridiqueLabel,
+} from "@/lib/insee-labels";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import {
@@ -156,11 +160,11 @@ export function InfoCard({ prospect }: { prospect: Prospect }) {
           {prospect.codePostal ? ` — ${prospect.codePostal}` : ""}{" "}
           {prospect.ville ?? ""}
         </Row>
-        <Row icon={Briefcase} label="Activité">
-          {prospect.codeNaf ?? "—"}
+        <Row icon={Briefcase} label="Activité (NAF)">
+          <span className="font-mono text-xs">{prospect.codeNaf ?? "—"}</span>
         </Row>
         <Row icon={Users} label="Effectif">
-          {prospect.trancheEffectif ?? "—"}
+          {trancheEffectifLabel(prospect.trancheEffectif)}
         </Row>
         <Row icon={Calendar} label="Créée">
           {prospect.dateCreation
@@ -168,7 +172,7 @@ export function InfoCard({ prospect }: { prospect: Prospect }) {
             : "—"}
         </Row>
         <Row icon={Briefcase} label="Forme juridique">
-          {prospect.formeJuridique ?? "—"}
+          {natureJuridiqueLabel(prospect.formeJuridique)}
         </Row>
       </CardContent>
     </Card>
