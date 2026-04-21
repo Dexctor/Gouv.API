@@ -167,6 +167,7 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
             (r.cache?.dateDernierBilan
               ? new Date(r.cache.dateDernierBilan).getFullYear().toString()
               : null);
+          const source = r.caSource;
           if (ca == null) {
             return (
               <Tooltip>
@@ -184,12 +185,21 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
           return (
             <Tooltip>
               <TooltipTrigger>
-                <span className="tabular-nums font-medium">
+                <span className="inline-flex items-center gap-1 tabular-nums font-medium">
                   {formatCompactEuro(ca)}
+                  {source === "cache-bce" && (
+                    <span
+                      className="h-1.5 w-1.5 rounded-full bg-blue-400"
+                      aria-hidden
+                    />
+                  )}
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                CA {year ?? "—"} — source INPI/BCE
+                CA {year ?? "—"} —{" "}
+                {source === "api-gouv"
+                  ? "source API gouv"
+                  : "dataset INPI/BCE"}
               </TooltipContent>
             </Tooltip>
           );

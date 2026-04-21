@@ -4,6 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -11,18 +13,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { PipelineStage } from "@prisma/client";
 import { PIPELINE_STAGES, type ProspectListItem } from "@/types/prospect";
 import { PipelineTable } from "@/components/pipeline/pipeline-table";
 import { PipelineBoard } from "@/components/pipeline/pipeline-board";
-import { exportPipelineCsvAction } from "@/actions/export";
+import {
+  exportPipelineCsvAction,
+  type ExportFilters,
+} from "@/actions/export";
 import { toast } from "sonner";
-import { Download, Loader2, LayoutGrid, Table as TableIcon } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  LayoutGrid,
+  Table as TableIcon,
+} from "lucide-react";
 
 export function PipelineClient({ rows }: { rows: ProspectListItem[] }) {
   const [stage, setStage] = useState<PipelineStage | "all">("all");
   const [search, setSearch] = useState("");
   const [isExporting, startExport] = useTransition();
+
+  // Export options
+  const [exportAssigned, setExportAssigned] = useState<"all" | "me">("all");
+  const [exportMinCA, setExportMinCA] = useState("");
+  const [exportOnlyWithSite, setExportOnlyWithSite] = useState(false);
+  const [exportOnlyWithContact, setExportOnlyWithContact] = useState(false);
+  const [exportLastContactDays, setExportLastContactDays] = useState("");
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -39,9 +61,20 @@ export function PipelineClient({ rows }: { rows: ProspectListItem[] }) {
 
   const handleExport = () => {
     startExport(async () => {
-      const res = await exportPipelineCsvAction(
-        stage !== "all" ? { stage } : undefined
-      );
+      const filters: ExportFilters = {
+        stages: stage !== "all" ? [stage] : undefined,
+        assignedToMe: exportAssigned === "me",
+        minCA: exportMinCA ? parseFloat(exportMinCA) * 1000 : undefined, // kilo-euros
+        onlyWithSite: exportOnlyWithSite || undefined,
+        onlyWithContact: exportOnlyWithContact || undefined,
+        lastContactedAfter: exportLastContactDays
+          ? new Date(
+              Date.now() -
+                parseInt(exportLastContactDays, 10) * 24 * 60 * 60 * 1000
+            ).toISOString()
+          : undefined,
+      };
+      const res = await exportPipelineCsvAction(filters);
       if (!res.success || !res.csv) {
         toast.error(res.error ?? "Export impossible");
         return;
@@ -55,7 +88,7 @@ export function PipelineClient({ rows }: { rows: ProspectListItem[] }) {
       a.download = res.filename ?? "pipeline.csv";
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("Export généré");
+      toast.success(`${res.count ?? 0} ligne(s) exportées`);
     });
   };
 
@@ -85,18 +118,93 @@ export function PipelineClient({ rows }: { rows: ProspectListItem[] }) {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button
-          variant="outline"
-          onClick={handleExport}
-          disabled={isExporting || filtered.length === 0}
-        >
-          {isExporting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="mr-2 h-4 w-4" />
-          )}
-          Exporter CSV
-        </Button>
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button
+                variant="outline"
+                disabled={isExporting || filtered.length === 0}
+              >
+                {isExporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Exporter CSV
+              </Button>
+            }
+          />
+          <PopoverContent className="w-80 space-y-3 p-4" align="end">
+            <div className="space-y-1">
+              <Label className="text-xs">Assignation</Label>
+              <Select
+                value={exportAssigned}
+                onValueChange={(v) => setExportAssigned(v as "all" | "me")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tout le pipeline</SelectItem>
+                  <SelectItem value="me">Mes prospects uniquement</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="exportMinCA" className="text-xs">
+                CA minimum (k€)
+              </Label>
+              <Input
+                id="exportMinCA"
+                inputMode="numeric"
+                placeholder="300"
+                value={exportMinCA}
+                onChange={(e) => setExportMinCA(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="exportDays" className="text-xs">
+                Contacté depuis moins de (jours)
+              </Label>
+              <Input
+                id="exportDays"
+                inputMode="numeric"
+                placeholder="30"
+                value={exportLastContactDays}
+                onChange={(e) => setExportLastContactDays(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 pt-1">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox
+                  checked={exportOnlyWithSite}
+                  onCheckedChange={(v) => setExportOnlyWithSite(v === true)}
+                />
+                <span>Avec site web</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox
+                  checked={exportOnlyWithContact}
+                  onCheckedChange={(v) => setExportOnlyWithContact(v === true)}
+                />
+                <span>Avec email ou téléphone</span>
+              </label>
+            </div>
+            <Button
+              onClick={handleExport}
+              disabled={isExporting}
+              size="sm"
+              className="w-full"
+            >
+              {isExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Télécharger
+            </Button>
+          </PopoverContent>
+        </Popover>
       </div>
 
       <Tabs defaultValue="table">

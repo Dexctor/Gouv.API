@@ -14,7 +14,14 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Search, Kanban, Settings, Building2 } from "lucide-react";
+import {
+  LayoutDashboard,
+  Search,
+  Kanban,
+  Settings,
+  Building2,
+  Map as MapIcon,
+} from "lucide-react";
 import type { Session } from "next-auth";
 import { UserMenu } from "./user-menu";
 
@@ -22,6 +29,7 @@ const nav = [
   { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
   { href: "/search", label: "Rechercher", icon: Search },
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
+  { href: "/map", label: "Carte", icon: MapIcon },
   { href: "/settings", label: "Paramètres", icon: Settings },
 ] as const;
 

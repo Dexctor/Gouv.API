@@ -12,6 +12,10 @@ import { FinancialSummary } from "@/components/prospects/financial-summary";
 import { ActivityTimeline } from "@/components/prospects/activity-timeline";
 import { DirigeantsCard } from "@/components/prospects/dirigeants-card";
 import { LabelsCard } from "@/components/prospects/labels-card";
+import { BodaccCard } from "@/components/prospects/bodacc-card";
+import { SitoscopeCard } from "@/components/prospects/sitoscope-card";
+import { isSitoscopeConfigured } from "@/lib/api/sitoscope";
+import { MapMini } from "@/components/map/map-mini";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
@@ -49,8 +53,8 @@ export default async function ProspectPage({
   if (!/^\d{9}$/.test(siren)) notFound();
 
   // On charge le prospect BDD + l'API en parallèle pour toujours afficher
-  // les données les plus fraîches (dirigeants, labels, finances).
-  const [prospect, apiCompany] = await Promise.all([
+  // les données les plus fraîches (dirigeants, labels, finances, BODACC).
+  const [prospect, apiCompany, bodaccEvents] = await Promise.all([
     prisma.prospect.findUnique({
       where: { siren },
       include: {
@@ -64,6 +68,11 @@ export default async function ProspectPage({
       },
     }),
     getCompanyBySiren(siren),
+    prisma.bodaccEvent.findMany({
+      where: { siren },
+      orderBy: { date: "desc" },
+      take: 10,
+    }),
   ]);
 
   // Prospect non encore dans le pipeline : on affiche les infos API + CTA
@@ -168,6 +177,14 @@ export default async function ProspectPage({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="space-y-4">
           <InfoCard prospect={prospect} />
+          {prospect.latitude != null && prospect.longitude != null && (
+            <MapMini
+              latitude={prospect.latitude}
+              longitude={prospect.longitude}
+              label={prospect.denomination}
+              height={180}
+            />
+          )}
           <LabelsCard
             complements={apiCompany?.complements}
             idccs={
@@ -175,6 +192,11 @@ export default async function ProspectPage({
             }
           />
           <WebsiteEditor prospectId={prospect.id} initial={prospect.siteWeb} />
+          <SitoscopeCard
+            prospectId={prospect.id}
+            siteWeb={prospect.siteWeb}
+            configured={isSitoscopeConfigured()}
+          />
           <NotesEditor prospectId={prospect.id} initial={prospect.notes} />
         </div>
         <div className="space-y-4">
@@ -182,6 +204,7 @@ export default async function ProspectPage({
           {apiCompany?.dirigeants && apiCompany.dirigeants.length > 0 && (
             <DirigeantsCard dirigeants={apiCompany.dirigeants} />
           )}
+          <BodaccCard events={bodaccEvents} />
         </div>
         <div>
           <ActivityTimeline

@@ -8,6 +8,7 @@ import {
   type CompanyResult,
   getLastCA,
 } from "@/lib/api/recherche-entreprises";
+import { getBilansBySiren } from "@/lib/api/ratios-bce";
 
 export interface EnrichedCompany extends CompanyResult {
   cache?: {
@@ -19,6 +20,7 @@ export interface EnrichedCompany extends CompanyResult {
   } | null;
   alreadyInPipeline?: boolean;
   lastCA?: { year: string; ca: number | null; resultat_net: number | null } | null;
+  caSource?: "api-gouv" | "cache-bce" | null;
 }
 
 export interface SearchActionResult {
@@ -58,12 +60,77 @@ export async function searchAction(
     const cacheBySiren = new Map(cached.map((c) => [c.siren, c]));
     const pipelineSet = new Set(existingProspects.map((p) => p.siren));
 
-    const enriched: EnrichedCompany[] = raw.results.map((r) => ({
-      ...r,
-      cache: cacheBySiren.get(r.siren) ?? null,
-      alreadyInPipeline: pipelineSet.has(r.siren),
-      lastCA: getLastCA(r),
-    }));
+    const enriched: EnrichedCompany[] = raw.results.map((r) => {
+      const apiCA = getLastCA(r);
+      const dbCache = cacheBySiren.get(r.siren) ?? null;
+      const caSource: EnrichedCompany["caSource"] = apiCA?.ca
+        ? "api-gouv"
+        : dbCache?.dernierCA
+          ? "cache-bce"
+          : null;
+      return {
+        ...r,
+        cache: dbCache,
+        alreadyInPipeline: pipelineSet.has(r.siren),
+        lastCA: apiCA,
+        caSource,
+      };
+    });
+
+    // Fallback on-demand : pour les SIREN sans CA ni cache, on interroge
+    // le dataset Ratios BCE en parallèle (rate-limité côté OpenDataSoft).
+    // On ne le fait que pour max 10 SIREN par page pour ne pas exploser le temps.
+    const missingSirens = enriched
+      .filter((c) => !c.lastCA?.ca && !c.cache?.dernierCA)
+      .slice(0, 10)
+      .map((c) => c.siren);
+
+    if (missingSirens.length > 0) {
+      const bceResults = await Promise.all(
+        missingSirens.map(async (siren) => {
+          const bilans = await getBilansBySiren(siren, 1);
+          return { siren, bilan: bilans[0] };
+        })
+      );
+
+      // Upsert silencieux du cache BCE + injecte dans la réponse
+      for (const { siren, bilan } of bceResults) {
+        if (!bilan) continue;
+        const dateCloture = new Date(bilan.date_cloture_exercice);
+        try {
+          await prisma.financialCache.upsert({
+            where: { siren },
+            update: {
+              dernierCA: bilan.chiffre_d_affaires,
+              dernierEBE: bilan.ebe,
+              dernierResultat: bilan.resultat_net,
+              dateDernierBilan: dateCloture,
+            },
+            create: {
+              siren,
+              dernierCA: bilan.chiffre_d_affaires,
+              dernierEBE: bilan.ebe,
+              dernierResultat: bilan.resultat_net,
+              dateDernierBilan: dateCloture,
+            },
+          });
+        } catch {
+          // Silent : DB peut être down, on ne casse pas la recherche
+        }
+
+        const target = enriched.find((c) => c.siren === siren);
+        if (target) {
+          target.cache = {
+            dernierCA: bilan.chiffre_d_affaires,
+            dernierEBE: bilan.ebe,
+            derniereMarge: bilan.marge_brute,
+            dernierResultat: bilan.resultat_net,
+            dateDernierBilan: dateCloture,
+          };
+          target.caSource = "cache-bce";
+        }
+      }
+    }
 
     return {
       success: true,

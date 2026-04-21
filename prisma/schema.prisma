@@ -99,6 +99,17 @@ model Prospect {
   email     String?
   telephone String?
 
+  // Labels INSEE / AFNOR (snapshot API gouv : est_rge, est_qualiopi, etc.)
+  labels    Json?
+  // Dirigeants (snapshot API gouv)
+  dirigeants Json?
+  // IDCC convention(s) collective(s)
+  idccs     String[] @default([])
+  // Catégorie INSEE : PME / ETI / GE
+  categorie String?
+  // Dernière synchro API
+  syncedAt  DateTime?
+
   // Pipeline
   stage    PipelineStage @default(A_QUALIFIER)
   priority Priority      @default(MEDIUM)

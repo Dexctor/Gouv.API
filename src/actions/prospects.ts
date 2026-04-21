@@ -46,6 +46,11 @@ export async function addToPipelineAction(
     const siege = company.siege;
     const lastCA = getLastCA(company);
 
+    const idccs =
+      company.complements?.liste_idcc ??
+      company.siege?.liste_idcc ??
+      [];
+
     const prospect = await prisma.prospect.create({
       data: {
         siren: parsed.data,
@@ -67,6 +72,16 @@ export async function addToPipelineAction(
         etatAdministratif: company.etat_administratif,
         stage: PipelineStage.A_QUALIFIER,
         assignedToId: user.id,
+        // Snapshots API
+        labels: company.complements
+          ? (company.complements as unknown as object)
+          : undefined,
+        dirigeants: company.dirigeants
+          ? (company.dirigeants as unknown as object)
+          : undefined,
+        idccs,
+        categorie: company.categorie_entreprise ?? null,
+        syncedAt: new Date(),
         activities: {
           create: {
             type: ActivityType.SYSTEM,
@@ -279,6 +294,55 @@ export async function assignProspectAction(
       data: { assignedToId: userId },
     });
     revalidatePath("/pipeline");
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Erreur",
+    };
+  }
+}
+
+// Rafraîchit les snapshots API (labels, dirigeants, IDCC, catégorie, finances)
+// depuis l'API gouv. À appeler sur la fiche prospect quand l'utilisateur le demande.
+export async function refreshProspectAction(
+  id: string
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    const prospect = await prisma.prospect.findUnique({
+      where: { id },
+      select: { siren: true },
+    });
+    if (!prospect) return { success: false, error: "Prospect introuvable" };
+
+    const company = await getCompanyBySiren(prospect.siren);
+    if (!company) return { success: false, error: "API gouv sans résultat" };
+
+    const idccs =
+      company.complements?.liste_idcc ?? company.siege?.liste_idcc ?? [];
+
+    await prisma.prospect.update({
+      where: { id },
+      data: {
+        denomination: company.nom_complet,
+        etatAdministratif: company.etat_administratif,
+        codeNaf: company.activite_principale,
+        trancheEffectif: company.tranche_effectif_salarie,
+        formeJuridique: company.nature_juridique,
+        labels: company.complements
+          ? (company.complements as unknown as object)
+          : undefined,
+        dirigeants: company.dirigeants
+          ? (company.dirigeants as unknown as object)
+          : undefined,
+        idccs,
+        categorie: company.categorie_entreprise ?? null,
+        syncedAt: new Date(),
+      },
+    });
+
+    revalidatePath(`/prospects`);
     return { success: true };
   } catch (err) {
     return {

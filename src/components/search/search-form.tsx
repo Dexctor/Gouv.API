@@ -33,6 +33,7 @@ import {
   NAF_SECTIONS,
   NATURE_JURIDIQUE_LABELS,
 } from "@/lib/insee-labels";
+import { NafSelector } from "./naf-selector";
 
 const ETATS = ["A", "C"] as const;
 const CATEGORIES = ["PME", "ETI", "GE"] as const;
@@ -208,7 +209,7 @@ export function SearchForm() {
       className="grid gap-4 rounded-lg border border-border/60 bg-card/40 p-4"
     >
       {/* Ligne 1 : recherche principale */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
         <div className="space-y-1 md:col-span-2">
           <Label htmlFor="q">Recherche textuelle</Label>
           <Input
@@ -231,16 +232,14 @@ export function SearchForm() {
             onChange={(e) => void setCp(e.target.value || null)}
           />
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="naf">Code NAF</Label>
-          <Input
-            id="naf"
-            name="naf"
-            placeholder="56.10A"
-            value={naf[0] ?? ""}
-            onChange={(e) =>
-              void setNaf(e.target.value ? ([e.target.value] as string[]) : [])
+        <div className="space-y-1 md:col-span-2">
+          <Label htmlFor="naf">Codes NAF</Label>
+          <NafSelector
+            value={naf}
+            onChange={(codes) =>
+              void setNaf(codes.length ? (codes as string[]) : [])
             }
+            placeholder="Boulangerie, BTP, services..."
           />
         </div>
         <div className="space-y-1">
