@@ -27,7 +27,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Loader2, Search, RotateCcw, SlidersHorizontal, Target } from "lucide-react";
 import {
   TRANCHE_EFFECTIF_LABELS,
   NAF_SECTIONS,
@@ -203,11 +203,88 @@ export function SearchForm() {
     void setCategorie(next as (typeof CATEGORIES)[number][]);
   };
 
+  // Presets ICP Opale : applique les filtres du critère commercial en 1 clic.
+  const applyIcpPreset = (variant: "services" | "products" | "hdf") => {
+    startTransition(async () => {
+      if (variant === "services") {
+        // Services : CA >= 300k, effectif 3-49, section NAF services
+        await Promise.all([
+          setCategorie(["PME"], COMMIT),
+          setEtat("A", COMMIT),
+          setCaMin(300_000, COMMIT),
+          setCaMax(10_000_000, COMMIT),
+          setEffectif(["02"], COMMIT),
+          setSection("M", COMMIT), // Activités spécialisées (conseil)
+          setPage(1, COMMIT),
+        ]);
+      } else if (variant === "products") {
+        // Produits / commerce : CA >= 800k
+        await Promise.all([
+          setCategorie(["PME"], COMMIT),
+          setEtat("A", COMMIT),
+          setCaMin(800_000, COMMIT),
+          setCaMax(10_000_000, COMMIT),
+          setEffectif(["02"], COMMIT),
+          setSection("G", COMMIT), // Commerce
+          setPage(1, COMMIT),
+        ]);
+      } else if (variant === "hdf") {
+        // Hauts-de-France pure, sans préjuger du secteur
+        await Promise.all([
+          setCategorie(["PME"], COMMIT),
+          setEtat("A", COMMIT),
+          setEffectif(["02"], COMMIT),
+          setCp("59", COMMIT), // Nord, à affiner
+          setPage(1, COMMIT),
+        ]);
+      }
+      router.refresh();
+    });
+  };
+
   return (
     <form
       onSubmit={handleSubmit}
       className="grid gap-4 rounded-lg border border-border/60 bg-card/40 p-4"
     >
+      {/* Presets ICP Opale — chargement 1 clic de critères métier */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/50 pb-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <Target className="mr-1 inline h-3 w-3" />
+          Presets ICP
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => applyIcpPreset("services")}
+          disabled={isPending}
+        >
+          Services ≥ 300 k€
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => applyIcpPreset("products")}
+          disabled={isPending}
+        >
+          Commerce ≥ 800 k€
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => applyIcpPreset("hdf")}
+          disabled={isPending}
+        >
+          PME Nord (59)
+        </Button>
+        <span className="text-[10px] text-muted-foreground">
+          CA max 10 M€ · effectif 3+ · active
+        </span>
+      </div>
+
       {/* Ligne 1 : recherche principale */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
         <div className="space-y-1 md:col-span-2">

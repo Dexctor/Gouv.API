@@ -4,6 +4,7 @@ import {
   trancheEffectifLabel,
   CATEGORIE_ENTREPRISE_LABELS,
 } from "@/lib/insee-labels";
+import { evaluateIcp, VERDICT_META } from "@/lib/icp-opale";
 import { differenceInYears } from "date-fns";
 import {
   TrendingUp,
@@ -11,7 +12,10 @@ import {
   Calendar,
   Building2,
   Target,
-  Activity,
+  Check,
+  X,
+  Phone,
+  UserCheck,
 } from "lucide-react";
 
 interface HeroProps {
@@ -31,38 +35,11 @@ interface HeroProps {
   anneeEffectif?: string | null;
   nombreEtablissements?: number | null;
   nombreEtablissementsOuverts?: number | null;
-  // ICP match Opale (CA>=300k services ou 800k autres + effectif>=2)
+  // ICP match Opale
   sectionNaf?: string | null;
-}
-
-const SERVICE_SECTIONS = ["G", "H", "I", "J", "K", "L", "M", "N", "R", "S"];
-
-function matchesOpaleIcp(params: {
-  ca: number | null | undefined;
-  trancheEffectif: string | null | undefined;
-  sectionNaf: string | null | undefined;
-}): { match: boolean; reason: string } {
-  const { ca, trancheEffectif, sectionNaf } = params;
-
-  // Effectif mini : tranche >= "01" (1-2 salariés), on exige au moins 01
-  const effectifOk =
-    trancheEffectif != null && !["NN", "00"].includes(trancheEffectif);
-
-  // CA mini : 300k pour services, 800k pour autres
-  const caSeuil =
-    sectionNaf && SERVICE_SECTIONS.includes(sectionNaf) ? 300_000 : 800_000;
-  const caOk = ca != null && ca >= caSeuil;
-
-  if (effectifOk && caOk) {
-    return { match: true, reason: `CA ${formatCompactEuro(ca)} + effectif OK` };
-  }
-  if (!caOk && ca == null && effectifOk) {
-    return { match: false, reason: "CA inconnu (vérifier)" };
-  }
-  const reasons: string[] = [];
-  if (!effectifOk) reasons.push("effectif insuffisant");
-  if (!caOk && ca != null) reasons.push(`CA < ${formatCompactEuro(caSeuil)}`);
-  return { match: false, reason: reasons.join(", ") || "hors cible" };
+  codeNaf?: string | null;
+  codePostal?: string | null;
+  siteWeb?: string | null;
 }
 
 function ageEntreprise(dateCreation: Date | string | null | undefined): {
@@ -82,11 +59,16 @@ function ageEntreprise(dateCreation: Date | string | null | undefined): {
 
 export function ProspectHero(props: HeroProps) {
   const age = ageEntreprise(props.dateCreation);
-  const icp = matchesOpaleIcp({
+  const icp = evaluateIcp({
     ca: props.ca,
     trancheEffectif: props.trancheEffectif,
     sectionNaf: props.sectionNaf,
+    codeNaf: props.codeNaf,
+    codePostal: props.codePostal,
+    siteWeb: props.siteWeb,
+    etatAdministratif: props.etat,
   });
+  const verdictMeta = VERDICT_META[icp.verdict];
 
   return (
     <div className="space-y-4 rounded-xl border border-border/60 bg-gradient-to-br from-card to-card/30 p-5">
@@ -117,15 +99,10 @@ export function ProspectHero(props: HeroProps) {
           ) : props.etat ? (
             <Badge variant="secondary">Cessée</Badge>
           ) : null}
-          {icp.match ? (
-            <Badge
-              variant="outline"
-              className="border-violet-500/40 bg-violet-500/10 text-violet-300"
-            >
-              <Target className="mr-1 h-3 w-3" />
-              ICP Opale
-            </Badge>
-          ) : null}
+          <Badge variant="outline" className={verdictMeta.badgeClass}>
+            <Target className="mr-1 h-3 w-3" />
+            {verdictMeta.label} · {icp.score}/100
+          </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="font-mono">SIREN {props.siren}</span>
@@ -193,12 +170,60 @@ export function ProspectHero(props: HeroProps) {
           dim={!props.nombreEtablissements}
         />
         <Kpi
-          icon={Activity}
-          label="Cible Opale"
-          value={icp.match ? "Match" : "Hors cible"}
-          subtitle={icp.reason}
-          tone={icp.match ? "ok" : "muted"}
+          icon={icp.details.dirigeant === "direct" ? UserCheck : Phone}
+          label="Dirigeant"
+          value={
+            icp.details.dirigeant === "direct"
+              ? "Accessible"
+              : icp.details.dirigeant === "filtre"
+                ? "Filtré"
+                : "À tester"
+          }
+          subtitle={
+            icp.details.dirigeant === "direct"
+              ? "Contact direct typique"
+              : icp.details.dirigeant === "filtre"
+                ? "Secrétaire en front"
+                : "Dépend du contact"
+          }
+          tone={
+            icp.details.dirigeant === "direct"
+              ? "ok"
+              : icp.details.dirigeant === "filtre"
+                ? "warn"
+                : "default"
+          }
         />
+      </div>
+
+      {/* Diagnostic ICP détaillé */}
+      <div className="grid grid-cols-1 gap-2 text-xs md:grid-cols-2">
+        {icp.positives.length > 0 && (
+          <div className="space-y-1 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+            <div className="font-medium text-emerald-300">Points forts</div>
+            <ul className="space-y-0.5">
+              {icp.positives.map((p) => (
+                <li key={p} className="flex items-start gap-1.5 text-emerald-200/80">
+                  <Check className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{p}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {icp.negatives.length > 0 && (
+          <div className="space-y-1 rounded-md border border-amber-500/20 bg-amber-500/5 p-2.5">
+            <div className="font-medium text-amber-300">Points faibles</div>
+            <ul className="space-y-0.5">
+              {icp.negatives.map((n) => (
+                <li key={n} className="flex items-start gap-1.5 text-amber-200/80">
+                  <X className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>{n}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -217,8 +242,16 @@ function Kpi({
   value: string;
   subtitle?: string;
   dim?: boolean;
-  tone?: "default" | "ok" | "muted";
+  tone?: "default" | "ok" | "muted" | "warn";
 }) {
+  const valueColor =
+    tone === "ok"
+      ? "text-emerald-400"
+      : tone === "warn"
+        ? "text-amber-400"
+        : tone === "muted"
+          ? "text-muted-foreground"
+          : "";
   return (
     <div
       className={`rounded-lg border border-border/60 bg-card/40 p-3 ${
@@ -229,11 +262,7 @@ function Kpi({
         <Icon className="h-3 w-3" />
         {label}
       </div>
-      <div
-        className={`mt-1 text-lg font-semibold tabular-nums ${
-          tone === "ok" ? "text-emerald-400" : ""
-        } ${tone === "muted" ? "text-muted-foreground" : ""}`}
-      >
+      <div className={`mt-1 text-lg font-semibold tabular-nums ${valueColor}`}>
         {value}
       </div>
       {subtitle && (

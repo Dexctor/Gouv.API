@@ -33,6 +33,7 @@ import {
   formatCompactEuro,
   CATEGORIE_ENTREPRISE_LABELS,
 } from "@/lib/insee-labels";
+import { evaluateIcp, VERDICT_META } from "@/lib/icp-opale";
 
 function age(dateCreation?: string | null) {
   if (!dateCreation) return "—";
@@ -232,6 +233,50 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
             {age(info.getValue())}
           </span>
         ),
+      }),
+      col.display({
+        id: "icp",
+        header: "ICP",
+        cell: ({ row }) => {
+          const r = row.original;
+          const ca = r.lastCA?.ca ?? r.cache?.dernierCA ?? null;
+          const icp = evaluateIcp({
+            ca,
+            trancheEffectif: r.tranche_effectif_salarie,
+            sectionNaf: r.section_activite_principale,
+            codeNaf: r.activite_principale,
+            codePostal: r.siege?.code_postal,
+            siteWeb: null, // pas encore stocké sur un résultat de recherche
+            etatAdministratif: r.etat_administratif,
+          });
+          const meta = VERDICT_META[icp.verdict];
+          return (
+            <Tooltip>
+              <TooltipTrigger>
+                <span
+                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${meta.badgeClass}`}
+                >
+                  {icp.score}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="space-y-1">
+                  <div className="font-medium">{meta.label}</div>
+                  {icp.positives.slice(0, 2).map((p) => (
+                    <div key={p} className="text-[11px] text-emerald-400">
+                      + {p}
+                    </div>
+                  ))}
+                  {icp.negatives.slice(0, 2).map((n) => (
+                    <div key={n} className="text-[11px] text-amber-400">
+                      − {n}
+                    </div>
+                  ))}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          );
+        },
       }),
       col.display({
         id: "actions",

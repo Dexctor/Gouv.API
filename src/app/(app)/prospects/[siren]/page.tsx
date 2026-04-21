@@ -104,6 +104,9 @@ export default async function ProspectPage({
           nombreEtablissements={c.nombre_etablissements}
           nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
           sectionNaf={c.section_activite_principale}
+          codeNaf={c.activite_principale}
+          codePostal={c.siege?.code_postal}
+          siteWeb={null}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -199,6 +202,9 @@ export default async function ProspectPage({
         nombreEtablissements={apiCompany?.nombre_etablissements}
         nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
         sectionNaf={apiCompany?.section_activite_principale}
+        codeNaf={prospect.codeNaf}
+        codePostal={prospect.codePostal}
+        siteWeb={prospect.siteWeb}
       />
 
       <ProspectActionsBar
