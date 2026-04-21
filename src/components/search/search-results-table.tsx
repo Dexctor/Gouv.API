@@ -33,7 +33,8 @@ import {
   formatCompactEuro,
   CATEGORIE_ENTREPRISE_LABELS,
 } from "@/lib/insee-labels";
-import { evaluateIcp, VERDICT_META } from "@/lib/icp-opale";
+import { evaluateIcp } from "@/lib/icp-opale";
+import { DecisionBadge } from "@/components/prospects/decision-banner";
 
 function age(dateCreation?: string | null) {
   if (!dateCreation) return "—";
@@ -236,7 +237,7 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
       }),
       col.display({
         id: "icp",
-        header: "ICP",
+        header: "Verdict",
         cell: ({ row }) => {
           const r = row.original;
           const ca = r.lastCA?.ca ?? r.cache?.dernierCA ?? null;
@@ -249,19 +250,13 @@ export function SearchResultsTable({ data }: { data: EnrichedCompany[] }) {
             siteWeb: null, // pas encore stocké sur un résultat de recherche
             etatAdministratif: r.etat_administratif,
           });
-          const meta = VERDICT_META[icp.verdict];
           return (
             <Tooltip>
               <TooltipTrigger>
-                <span
-                  className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${meta.badgeClass}`}
-                >
-                  {icp.score}
-                </span>
+                <DecisionBadge icp={icp} />
               </TooltipTrigger>
               <TooltipContent>
                 <div className="space-y-1">
-                  <div className="font-medium">{meta.label}</div>
                   {icp.positives.slice(0, 2).map((p) => (
                     <div key={p} className="text-[11px] text-emerald-400">
                       + {p}

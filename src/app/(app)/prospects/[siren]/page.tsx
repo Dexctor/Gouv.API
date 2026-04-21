@@ -6,21 +6,27 @@ import {
   getLastCA,
 } from "@/lib/api/recherche-entreprises";
 import { getBilansBySiren } from "@/lib/api/ratios-bce";
-import { ProspectHero } from "@/components/prospects/prospect-hero";
-import { IdentityCard } from "@/components/prospects/identity-card";
-import { ProspectActionsBar } from "@/components/prospects/prospect-actions";
+import { evaluateIcp, caSeuilFor } from "@/lib/icp-opale";
+
+// Composants nouveau layout
+import { ProspectTitle } from "@/components/prospects/prospect-title";
+import { DecisionBanner } from "@/components/prospects/decision-banner";
+import { QuickStats } from "@/components/prospects/quick-stats";
+import { ActionSidebar } from "@/components/prospects/action-sidebar";
 import {
-  WebsiteEditor,
-  NotesEditor,
-} from "@/components/prospects/prospect-card";
+  DetailTabs,
+  type DetailTab,
+} from "@/components/prospects/detail-tabs";
+import { EntrepriseTab } from "@/components/prospects/entreprise-tab";
+
+// Composants existants
 import { FinancialSummary } from "@/components/prospects/financial-summary";
 import { ActivityTimeline } from "@/components/prospects/activity-timeline";
 import { DirigeantsCard } from "@/components/prospects/dirigeants-card";
-import { LabelsCard } from "@/components/prospects/labels-card";
 import { BodaccCard } from "@/components/prospects/bodacc-card";
 import { SitoscopeCard } from "@/components/prospects/sitoscope-card";
 import { SeoAuditCard } from "@/components/prospects/seo-audit-card";
-import { ExternalLinksCard } from "@/components/prospects/external-links-card";
+import { WebsiteEditor, NotesEditor } from "@/components/prospects/prospect-card";
 import { MapMini } from "@/components/map/map-mini";
 import { AddToPipelineButton } from "@/components/prospects/add-to-pipeline-button";
 import { isSitoscopeConfigured } from "@/lib/api/sitoscope";
@@ -71,43 +77,52 @@ export default async function ProspectPage({
     }),
   ]);
 
-  // Si aucun bilan en BDD, on tente Ratios BCE en fallback
   let extraBilans: Awaited<ReturnType<typeof getBilansBySiren>> = [];
   const hasFinances =
-    (prospect?.financials.length ?? 0) > 0 ||
-    apiCompany?.finances !== null;
-  if (!hasFinances) {
-    extraBilans = await getBilansBySiren(siren, 5);
-  }
+    (prospect?.financials.length ?? 0) > 0 || apiCompany?.finances !== null;
+  if (!hasFinances) extraBilans = await getBilansBySiren(siren, 5);
 
-  // === PAGE PROSPECT NON ENCORE EN PIPELINE ===
+  // ================================================================
+  // PROSPECT NON EN PIPELINE — preview avant ajout
+  // ================================================================
   if (!prospect) {
     if (!apiCompany) notFound();
     const c = apiCompany;
     const lastCA = getLastCA(c);
+    const icp = evaluateIcp({
+      ca: lastCA?.ca ?? null,
+      trancheEffectif: c.tranche_effectif_salarie,
+      sectionNaf: c.section_activite_principale,
+      codeNaf: c.activite_principale,
+      codePostal: c.siege?.code_postal,
+      siteWeb: null,
+      etatAdministratif: c.etat_administratif,
+    });
 
     return (
-      <div className="space-y-5">
-        <ProspectHero
+      <div className="mx-auto max-w-6xl space-y-5">
+        <ProspectTitle
           denomination={c.nom_complet}
-          siren={c.siren}
-          siret={c.siege?.siret}
-          nomCommercial={c.siege?.nom_commercial ?? c.nom_raison_sociale}
           sigle={c.sigle}
+          nomCommercial={c.siege?.nom_commercial ?? c.nom_raison_sociale}
+          siren={c.siren}
           categorie={c.categorie_entreprise}
           etat={c.etat_administratif}
+        />
+
+        <DecisionBanner icp={icp} />
+
+        <QuickStats
           ca={lastCA?.ca ?? null}
           caYear={lastCA?.year ?? null}
+          caSeuil={caSeuilFor(c.section_activite_principale)}
           resultatNet={lastCA?.resultat_net ?? null}
-          dateCreation={c.date_creation}
-          trancheEffectif={c.tranche_effectif_salarie}
+          trancheEffectif={c.tranche_effectif_salarie ?? null}
           anneeEffectif={c.annee_tranche_effectif_salarie}
+          dateCreation={c.date_creation}
           nombreEtablissements={c.nombre_etablissements}
           nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
-          sectionNaf={c.section_activite_principale}
-          codeNaf={c.activite_principale}
-          codePostal={c.siege?.code_postal}
-          siteWeb={null}
+          icp={icp}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
@@ -117,48 +132,25 @@ export default async function ProspectPage({
           <AddToPipelineButton siren={c.siren} />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="space-y-4 lg:col-span-2">
-            <IdentityCard
-              adresse={c.siege?.adresse ?? null}
-              codePostal={c.siege?.code_postal ?? null}
-              ville={c.siege?.libelle_commune ?? c.siege?.commune ?? null}
-              latitude={c.siege?.latitude ? Number(c.siege.latitude) : null}
-              longitude={c.siege?.longitude ? Number(c.siege.longitude) : null}
-              codeNaf={c.activite_principale}
-              codeNaf25={c.activite_principale_naf25}
-              formeJuridique={c.nature_juridique}
-              dateCreation={c.date_creation}
-              siret={c.siege?.siret ?? null}
-              email={null}
-              telephone={null}
-              siteWeb={null}
-              enseignes={c.siege?.liste_enseignes ?? null}
-              nombreEtablissements={c.nombre_etablissements}
-              nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
-              siren={c.siren}
-            />
-            {c.siege?.latitude && c.siege?.longitude && (
-              <MapMini
-                latitude={Number(c.siege.latitude)}
-                longitude={Number(c.siege.longitude)}
-                label={c.nom_complet}
-                height={220}
-              />
-            )}
-          </div>
+        <EntrepriseTab
+          siren={c.siren}
+          siret={c.siege?.siret ?? null}
+          codeNaf={c.activite_principale}
+          codeNaf25={c.activite_principale_naf25}
+          formeJuridique={c.nature_juridique}
+          dateCreation={c.date_creation}
+          enseignes={c.siege?.liste_enseignes}
+          complements={c.complements}
+          idccs={
+            c.complements?.liste_idcc ?? c.siege?.liste_idcc ?? []
+          }
+          nombreEtablissements={c.nombre_etablissements}
+          nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
+        />
 
-          <div className="space-y-4">
-            <LabelsCard
-              complements={c.complements}
-              idccs={c.complements?.liste_idcc ?? c.siege?.liste_idcc}
-            />
-            {c.dirigeants && c.dirigeants.length > 0 && (
-              <DirigeantsCard dirigeants={c.dirigeants} />
-            )}
-            <ExternalLinksCard siren={c.siren} />
-          </div>
-        </div>
+        {c.dirigeants && c.dirigeants.length > 0 && (
+          <DirigeantsCard dirigeants={c.dirigeants} />
+        )}
 
         <Link
           href="/search"
@@ -170,128 +162,98 @@ export default async function ProspectPage({
     );
   }
 
-  // === PAGE PROSPECT EN PIPELINE ===
+  // ================================================================
+  // PROSPECT EN PIPELINE — fiche complète
+  // ================================================================
   const lastCA = apiCompany ? getLastCA(apiCompany) : null;
-  const caForHero =
+  const caForStats =
     lastCA?.ca ?? prospect.financials[0]?.chiffreAffaires ?? null;
   const caYear =
     lastCA?.year ??
     (prospect.financials[0]?.dateCloture
-      ? new Date(prospect.financials[0].dateCloture)
-          .getFullYear()
-          .toString()
+      ? new Date(prospect.financials[0].dateCloture).getFullYear().toString()
       : null);
-  const rnForHero =
+  const rnForStats =
     lastCA?.resultat_net ?? prospect.financials[0]?.resultatNet ?? null;
 
-  return (
-    <div className="space-y-5">
-      <ProspectHero
-        denomination={prospect.denomination}
-        siren={prospect.siren}
-        siret={prospect.siret}
-        nomCommercial={prospect.nomCommercial}
-        sigle={apiCompany?.sigle}
-        categorie={prospect.categorie ?? apiCompany?.categorie_entreprise ?? null}
-        etat={prospect.etatAdministratif}
-        ca={caForHero}
-        caYear={caYear}
-        resultatNet={rnForHero}
-        dateCreation={prospect.dateCreation}
-        trancheEffectif={prospect.trancheEffectif}
-        anneeEffectif={apiCompany?.annee_tranche_effectif_salarie}
-        nombreEtablissements={apiCompany?.nombre_etablissements}
-        nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
-        sectionNaf={apiCompany?.section_activite_principale}
-        codeNaf={prospect.codeNaf}
-        codePostal={prospect.codePostal}
-        siteWeb={prospect.siteWeb}
-      />
+  const icp = evaluateIcp({
+    ca: caForStats,
+    trancheEffectif: prospect.trancheEffectif,
+    sectionNaf: apiCompany?.section_activite_principale,
+    codeNaf: prospect.codeNaf,
+    codePostal: prospect.codePostal,
+    siteWeb: prospect.siteWeb,
+    etatAdministratif: prospect.etatAdministratif,
+  });
 
-      <ProspectActionsBar
-        id={prospect.id}
-        stage={prospect.stage}
-        priority={prospect.priority}
-        syncedAt={prospect.syncedAt}
-      />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Colonne gauche : Identité + Labels */}
-        <div className="space-y-4">
-          <IdentityCard
-            adresse={prospect.adresse}
-            codePostal={prospect.codePostal}
-            ville={prospect.ville}
-            latitude={prospect.latitude}
-            longitude={prospect.longitude}
-            codeNaf={prospect.codeNaf}
-            codeNaf25={apiCompany?.activite_principale_naf25}
-            formeJuridique={prospect.formeJuridique}
-            dateCreation={prospect.dateCreation}
-            siret={prospect.siret}
-            email={prospect.email}
-            telephone={prospect.telephone}
-            siteWeb={prospect.siteWeb}
-            enseignes={apiCompany?.siege?.liste_enseignes}
-            nombreEtablissements={apiCompany?.nombre_etablissements}
-            nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
-            siren={prospect.siren}
-          />
-          {prospect.latitude != null && prospect.longitude != null && (
-            <MapMini
-              latitude={prospect.latitude}
-              longitude={prospect.longitude}
-              label={prospect.denomination}
-              height={180}
-            />
-          )}
-          <LabelsCard
-            complements={apiCompany?.complements}
-            idccs={
-              apiCompany?.complements?.liste_idcc ??
-              apiCompany?.siege?.liste_idcc ??
-              prospect.idccs
-            }
-          />
-          <ExternalLinksCard siren={prospect.siren} />
-        </div>
-
-        {/* Colonne centrale : Finances + Dirigeants + BODACC */}
-        <div className="space-y-4">
-          <FinancialSummary
-            data={prospect.financials}
-          />
+  // Tabs de détail : 1 seule zone active à la fois → l'UI respire
+  const tabs: DetailTab[] = [
+    {
+      key: "entreprise",
+      label: "Entreprise",
+      icon: "building",
+      content: (
+        <EntrepriseTab
+          siren={prospect.siren}
+          siret={prospect.siret}
+          codeNaf={prospect.codeNaf}
+          codeNaf25={apiCompany?.activite_principale_naf25}
+          formeJuridique={prospect.formeJuridique}
+          dateCreation={prospect.dateCreation}
+          enseignes={apiCompany?.siege?.liste_enseignes}
+          complements={apiCompany?.complements}
+          idccs={
+            apiCompany?.complements?.liste_idcc ??
+            apiCompany?.siege?.liste_idcc ??
+            prospect.idccs
+          }
+          nombreEtablissements={apiCompany?.nombre_etablissements}
+          nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
+        />
+      ),
+    },
+    {
+      key: "finances",
+      label: "Finances",
+      icon: "trend",
+      content: (
+        <>
+          <FinancialSummary data={prospect.financials} />
           {extraBilans.length > 0 && prospect.financials.length === 0 && (
             <Card className="border-border/60">
               <CardContent className="pt-4">
-                <div className="mb-1 text-xs text-muted-foreground">
-                  Bilans disponibles via INPI/BCE (non encore importés) :
+                <div className="mb-1 text-xs font-medium text-muted-foreground">
+                  Bilans disponibles via INPI/BCE (à importer)
                 </div>
-                <div className="space-y-1 text-xs">
+                <div className="space-y-1 text-sm">
                   {extraBilans.map((b) => (
-                    <div key={b.date_cloture_exercice}>
-                      {b.date_cloture_exercice.slice(0, 4)} — CA{" "}
-                      {b.chiffre_d_affaires
-                        ? b.chiffre_d_affaires.toLocaleString("fr-FR") + " €"
-                        : "N/C"}
+                    <div
+                      key={b.date_cloture_exercice}
+                      className="flex items-center justify-between rounded-md border border-border/60 bg-card/40 px-2.5 py-1.5"
+                    >
+                      <span className="font-mono text-xs">
+                        {b.date_cloture_exercice.slice(0, 4)}
+                      </span>
+                      <span className="tabular-nums">
+                        {b.chiffre_d_affaires
+                          ? b.chiffre_d_affaires.toLocaleString("fr-FR") + " €"
+                          : "N/C"}
+                      </span>
                     </div>
                   ))}
                 </div>
               </CardContent>
             </Card>
           )}
-          {apiCompany?.dirigeants && apiCompany.dirigeants.length > 0 && (
-            <DirigeantsCard dirigeants={apiCompany.dirigeants} />
-          )}
-          <BodaccCard events={bodaccEvents} />
-        </div>
-
-        {/* Colonne droite : Historique + Audit + Notes */}
-        <div className="space-y-4">
-          <ActivityTimeline
-            prospectId={prospect.id}
-            activities={prospect.activities}
-          />
+        </>
+      ),
+    },
+    {
+      key: "web",
+      label: "Web",
+      icon: "web",
+      content: (
+        <>
           <WebsiteEditor
             prospectId={prospect.id}
             initial={prospect.siteWeb}
@@ -301,14 +263,141 @@ export default async function ProspectPage({
             siteWeb={prospect.siteWeb}
             denomination={prospect.denomination}
           />
-          <SitoscopeCard
+          {isSitoscopeConfigured() && (
+            <SitoscopeCard
+              prospectId={prospect.id}
+              siteWeb={prospect.siteWeb}
+              configured={true}
+            />
+          )}
+        </>
+      ),
+    },
+    {
+      key: "dirigeants",
+      label: "Dirigeants",
+      icon: "users",
+      count: apiCompany?.dirigeants?.length ?? 0,
+      content:
+        apiCompany?.dirigeants && apiCompany.dirigeants.length > 0 ? (
+          <DirigeantsCard dirigeants={apiCompany.dirigeants} />
+        ) : (
+          <EmptyTab
+            title="Aucun dirigeant identifié"
+            subtitle="L'API gouv n'a pas retourné de dirigeant pour cette entreprise."
+          />
+        ),
+    },
+    {
+      key: "bodacc",
+      label: "BODACC",
+      icon: "bodacc",
+      count: bodaccEvents.length,
+      content:
+        bodaccEvents.length > 0 ? (
+          <BodaccCard events={bodaccEvents} />
+        ) : (
+          <EmptyTab
+            title="Aucune annonce BODACC"
+            subtitle="Pas d'événement légal récent. Le worker quotidien surveille automatiquement."
+          />
+        ),
+    },
+    {
+      key: "activity",
+      label: "Historique",
+      icon: "activity",
+      count: prospect.activities.length,
+      content: (
+        <>
+          <ActivityTimeline
             prospectId={prospect.id}
-            siteWeb={prospect.siteWeb}
-            configured={isSitoscopeConfigured()}
+            activities={prospect.activities}
           />
           <NotesEditor prospectId={prospect.id} initial={prospect.notes} />
+        </>
+      ),
+    },
+  ];
+
+  return (
+    <div className="mx-auto max-w-7xl">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
+        {/* Colonne principale */}
+        <div className="space-y-5 min-w-0">
+          <ProspectTitle
+            denomination={prospect.denomination}
+            sigle={apiCompany?.sigle}
+            nomCommercial={prospect.nomCommercial}
+            siren={prospect.siren}
+            categorie={
+              prospect.categorie ?? apiCompany?.categorie_entreprise ?? null
+            }
+            etat={prospect.etatAdministratif}
+          />
+
+          {/* 1. DÉCISION — la question principale en 1 regard */}
+          <DecisionBanner icp={icp} />
+
+          {/* 2. KPIs — 5 chiffres essentiels, stripes colorées de match */}
+          <QuickStats
+            ca={caForStats}
+            caYear={caYear}
+            caSeuil={caSeuilFor(apiCompany?.section_activite_principale)}
+            resultatNet={rnForStats}
+            trancheEffectif={prospect.trancheEffectif}
+            anneeEffectif={apiCompany?.annee_tranche_effectif_salarie}
+            dateCreation={prospect.dateCreation}
+            nombreEtablissements={apiCompany?.nombre_etablissements}
+            nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
+            icp={icp}
+          />
+
+          {/* 3. Mini-carte — context géo léger */}
+          {prospect.latitude != null && prospect.longitude != null && (
+            <MapMini
+              latitude={prospect.latitude}
+              longitude={prospect.longitude}
+              label={prospect.denomination}
+              height={200}
+            />
+          )}
+
+          {/* 4. DÉTAILS — progressive disclosure via tabs */}
+          <DetailTabs tabs={tabs} defaultTab="entreprise" />
         </div>
+
+        {/* Sidebar droite sticky */}
+        <aside className="lg:sticky lg:top-4 lg:self-start">
+          <ActionSidebar
+            prospect={{
+              id: prospect.id,
+              siren: prospect.siren,
+              stage: prospect.stage,
+              priority: prospect.priority,
+              telephone: prospect.telephone,
+              email: prospect.email,
+              siteWeb: prospect.siteWeb,
+              adresse: prospect.adresse,
+              codePostal: prospect.codePostal,
+              ville: prospect.ville,
+              latitude: prospect.latitude,
+              longitude: prospect.longitude,
+            }}
+          />
+        </aside>
       </div>
     </div>
+  );
+}
+
+function EmptyTab({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <Card className="border-border/60 border-dashed">
+      <CardContent className="py-10 text-center">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>
+      </CardContent>
+    </Card>
   );
 }

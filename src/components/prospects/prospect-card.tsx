@@ -2,202 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { Prospect } from "@prisma/client";
-import { PipelineStage, Priority } from "@prisma/client";
-import {
-  PIPELINE_STAGES,
-  PRIORITIES,
-} from "@/types/prospect";
-import {
-  updateStageAction,
-  updatePriorityAction,
-  updateNotesAction,
-  updateSiteWebAction,
-  deleteProspectAction,
-} from "@/actions/prospects";
-import { buildPappersUrl, buildAnnuaireUrl } from "@/lib/api/pappers-url";
-import {
-  trancheEffectifLabel,
-  natureJuridiqueLabel,
-} from "@/lib/insee-labels";
+import { updateNotesAction, updateSiteWebAction } from "@/actions/prospects";
 import { toast } from "sonner";
-import { useRouter } from "next/navigation";
-import {
-  ExternalLink,
-  Globe,
-  Save,
-  Trash2,
-  Loader2,
-  MapPin,
-  Calendar,
-  Briefcase,
-  Users,
-} from "lucide-react";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
-
-export function ProspectHeader({ prospect }: { prospect: Prospect }) {
-  const [, startTransition] = useTransition();
-  const router = useRouter();
-
-  const handleStage = (s: PipelineStage) => {
-    startTransition(async () => {
-      const res = await updateStageAction(prospect.id, s);
-      if (!res.success) toast.error(res.error);
-    });
-  };
-  const handlePriority = (p: Priority) => {
-    startTransition(async () => {
-      const res = await updatePriorityAction(prospect.id, p);
-      if (!res.success) toast.error(res.error);
-    });
-  };
-  const handleDelete = () => {
-    if (!confirm("Supprimer ce prospect ?")) return;
-    startTransition(async () => {
-      const res = await deleteProspectAction(prospect.id);
-      if (res.success) {
-        toast.success("Supprimé");
-        router.push("/pipeline");
-      } else {
-        toast.error(res.error);
-      }
-    });
-  };
-
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {prospect.denomination}
-        </h1>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="font-mono">{prospect.siren}</span>
-          {prospect.siret && (
-            <>
-              <span>·</span>
-              <span className="font-mono">{prospect.siret}</span>
-            </>
-          )}
-          {prospect.etatAdministratif === "F" && (
-            <Badge variant="secondary">Fermé</Badge>
-          )}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={prospect.stage} onValueChange={(v) => handleStage(v as PipelineStage)}>
-          <SelectTrigger className="w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PIPELINE_STAGES.map((s) => (
-              <SelectItem key={s.value} value={s.value}>
-                {s.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={prospect.priority} onValueChange={(v) => handlePriority(v as Priority)}>
-          <SelectTrigger className="w-28">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PRIORITIES.map((p) => (
-              <SelectItem key={p.value} value={p.value}>
-                {p.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button asChild size="sm" variant="outline">
-          <a
-            href={buildPappersUrl(prospect.siren)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLink className="mr-1 h-3.5 w-3.5" />
-            Pappers
-          </a>
-        </Button>
-        <Button asChild size="sm" variant="outline">
-          <a
-            href={buildAnnuaireUrl(prospect.siren)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ExternalLink className="mr-1 h-3.5 w-3.5" />
-            Annuaire
-          </a>
-        </Button>
-        <Button size="icon" variant="ghost" onClick={handleDelete} aria-label="Supprimer">
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-export function InfoCard({ prospect }: { prospect: Prospect }) {
-  return (
-    <Card className="border-border/60">
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">Informations</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <Row icon={MapPin} label="Adresse">
-          {prospect.adresse}
-          {prospect.codePostal ? ` — ${prospect.codePostal}` : ""}{" "}
-          {prospect.ville ?? ""}
-        </Row>
-        <Row icon={Briefcase} label="Activité (NAF)">
-          <span className="font-mono text-xs">{prospect.codeNaf ?? "—"}</span>
-        </Row>
-        <Row icon={Users} label="Effectif">
-          {trancheEffectifLabel(prospect.trancheEffectif)}
-        </Row>
-        <Row icon={Calendar} label="Créée">
-          {prospect.dateCreation
-            ? format(prospect.dateCreation, "PPP", { locale: fr })
-            : "—"}
-        </Row>
-        <Row icon={Briefcase} label="Forme juridique">
-          {natureJuridiqueLabel(prospect.formeJuridique)}
-        </Row>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Row({
-  icon: Icon,
-  label,
-  children,
-}: {
-  icon: typeof MapPin;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-2">
-      <Icon className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
-      <div className="flex-1">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div>{children}</div>
-      </div>
-    </div>
-  );
-}
+import { Loader2, Save, Globe } from "lucide-react";
 
 export function WebsiteEditor({
   prospectId,
@@ -240,8 +50,8 @@ export function WebsiteEditor({
             )}
           </Button>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Le site sera utilisé pour l&apos;audit Sitoscope en phase 2.
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          URL utilisée pour l&apos;audit SEO et Sitoscope.
         </p>
       </CardContent>
     </Card>
@@ -269,14 +79,14 @@ export function NotesEditor({
   return (
     <Card className="border-border/60">
       <CardHeader>
-        <CardTitle className="text-sm font-medium">Notes</CardTitle>
+        <CardTitle className="text-sm font-medium">Notes libres</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
         <Textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={4}
-          placeholder="Commentaires libres sur ce prospect..."
+          placeholder="Contexte, éléments clés, prochaines étapes..."
           className="text-sm"
         />
         <Button size="sm" onClick={save} disabled={isPending}>
