@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getCompanyBySiren } from "@/lib/api/recherche-entreprises";
 import {
-  ProspectHeader,
-  InfoCard,
+  getCompanyBySiren,
+  getLastCA,
+} from "@/lib/api/recherche-entreprises";
+import { getBilansBySiren } from "@/lib/api/ratios-bce";
+import { ProspectHero } from "@/components/prospects/prospect-hero";
+import { IdentityCard } from "@/components/prospects/identity-card";
+import { ProspectActionsBar } from "@/components/prospects/prospect-actions";
+import {
   WebsiteEditor,
   NotesEditor,
 } from "@/components/prospects/prospect-card";
@@ -14,20 +19,12 @@ import { DirigeantsCard } from "@/components/prospects/dirigeants-card";
 import { LabelsCard } from "@/components/prospects/labels-card";
 import { BodaccCard } from "@/components/prospects/bodacc-card";
 import { SitoscopeCard } from "@/components/prospects/sitoscope-card";
-import { isSitoscopeConfigured } from "@/lib/api/sitoscope";
+import { ExternalLinksCard } from "@/components/prospects/external-links-card";
 import { MapMini } from "@/components/map/map-mini";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import Link from "next/link";
 import { AddToPipelineButton } from "@/components/prospects/add-to-pipeline-button";
-import {
-  trancheEffectifLabel,
-  natureJuridiqueLabel,
-  CATEGORIE_ENTREPRISE_LABELS,
-  formatCompactEuro,
-} from "@/lib/insee-labels";
-import { format } from "date-fns";
-import { fr } from "date-fns/locale";
+import { isSitoscopeConfigured } from "@/lib/api/sitoscope";
+import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
 
 export async function generateMetadata({
   params,
@@ -52,8 +49,6 @@ export default async function ProspectPage({
   const { siren } = await params;
   if (!/^\d{9}$/.test(siren)) notFound();
 
-  // On charge le prospect BDD + l'API en parallèle pour toujours afficher
-  // les données les plus fraîches (dirigeants, labels, finances, BODACC).
   const [prospect, apiCompany, bodaccEvents] = await Promise.all([
     prisma.prospect.findUnique({
       where: { siren },
@@ -71,82 +66,83 @@ export default async function ProspectPage({
     prisma.bodaccEvent.findMany({
       where: { siren },
       orderBy: { date: "desc" },
-      take: 10,
+      take: 20,
     }),
   ]);
 
-  // Prospect non encore dans le pipeline : on affiche les infos API + CTA
+  // Si aucun bilan en BDD, on tente Ratios BCE en fallback
+  let extraBilans: Awaited<ReturnType<typeof getBilansBySiren>> = [];
+  const hasFinances =
+    (prospect?.financials.length ?? 0) > 0 ||
+    apiCompany?.finances !== null;
+  if (!hasFinances) {
+    extraBilans = await getBilansBySiren(siren, 5);
+  }
+
+  // === PAGE PROSPECT NON ENCORE EN PIPELINE ===
   if (!prospect) {
     if (!apiCompany) notFound();
     const c = apiCompany;
-    const ca = c.finances
-      ? Object.entries(c.finances)
-          .sort(([a], [b]) => b.localeCompare(a))
-          .at(0)
-      : null;
+    const lastCA = getLastCA(c);
 
     return (
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {c.nom_complet}
-            </h1>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span className="font-mono">{c.siren}</span>
-              {c.categorie_entreprise && (
-                <Badge variant="outline">
-                  {CATEGORIE_ENTREPRISE_LABELS[c.categorie_entreprise]}
-                </Badge>
-              )}
-              {c.etat_administratif === "C" && (
-                <Badge variant="secondary">Cessée</Badge>
-              )}
-            </div>
-          </div>
+      <div className="space-y-5">
+        <ProspectHero
+          denomination={c.nom_complet}
+          siren={c.siren}
+          siret={c.siege?.siret}
+          nomCommercial={c.siege?.nom_commercial ?? c.nom_raison_sociale}
+          sigle={c.sigle}
+          categorie={c.categorie_entreprise}
+          etat={c.etat_administratif}
+          ca={lastCA?.ca ?? null}
+          caYear={lastCA?.year ?? null}
+          resultatNet={lastCA?.resultat_net ?? null}
+          dateCreation={c.date_creation}
+          trancheEffectif={c.tranche_effectif_salarie}
+          anneeEffectif={c.annee_tranche_effectif_salarie}
+          nombreEtablissements={c.nombre_etablissements}
+          nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
+          sectionNaf={c.section_activite_principale}
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+          <span className="text-sm">
+            Ce prospect n&apos;est pas encore dans votre pipeline.
+          </span>
           <AddToPipelineButton siren={c.siren} />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Card className="border-border/60 md:col-span-2">
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Informations publiques
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-              <InfoRow label="Adresse">
-                {c.siege?.adresse} — {c.siege?.code_postal}{" "}
-                {c.siege?.libelle_commune ?? c.siege?.commune}
-              </InfoRow>
-              <InfoRow label="NAF">{c.activite_principale}</InfoRow>
-              <InfoRow label="Effectif">
-                {trancheEffectifLabel(c.tranche_effectif_salarie)}
-                {c.annee_tranche_effectif_salarie && (
-                  <span className="text-xs text-muted-foreground">
-                    {" "}
-                    ({c.annee_tranche_effectif_salarie})
-                  </span>
-                )}
-              </InfoRow>
-              <InfoRow label="Créée le">
-                {c.date_creation
-                  ? format(new Date(c.date_creation), "PPP", { locale: fr })
-                  : "—"}
-              </InfoRow>
-              <InfoRow label="Forme juridique">
-                {natureJuridiqueLabel(c.nature_juridique)}
-              </InfoRow>
-              <InfoRow label="État">
-                {c.etat_administratif === "A" ? "Active" : "Cessée"}
-              </InfoRow>
-              {ca && (
-                <InfoRow label={`CA ${ca[0]}`}>
-                  {formatCompactEuro(ca[1]?.ca ?? null)}
-                </InfoRow>
-              )}
-            </CardContent>
-          </Card>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="space-y-4 lg:col-span-2">
+            <IdentityCard
+              adresse={c.siege?.adresse ?? null}
+              codePostal={c.siege?.code_postal ?? null}
+              ville={c.siege?.libelle_commune ?? c.siege?.commune ?? null}
+              latitude={c.siege?.latitude ? Number(c.siege.latitude) : null}
+              longitude={c.siege?.longitude ? Number(c.siege.longitude) : null}
+              codeNaf={c.activite_principale}
+              codeNaf25={c.activite_principale_naf25}
+              formeJuridique={c.nature_juridique}
+              dateCreation={c.date_creation}
+              siret={c.siege?.siret ?? null}
+              email={null}
+              telephone={null}
+              siteWeb={null}
+              enseignes={c.siege?.liste_enseignes ?? null}
+              nombreEtablissements={c.nombre_etablissements}
+              nombreEtablissementsOuverts={c.nombre_etablissements_ouverts}
+              siren={c.siren}
+            />
+            {c.siege?.latitude && c.siege?.longitude && (
+              <MapMini
+                latitude={Number(c.siege.latitude)}
+                longitude={Number(c.siege.longitude)}
+                label={c.nom_complet}
+                height={220}
+              />
+            )}
+          </div>
 
           <div className="space-y-4">
             <LabelsCard
@@ -156,27 +152,84 @@ export default async function ProspectPage({
             {c.dirigeants && c.dirigeants.length > 0 && (
               <DirigeantsCard dirigeants={c.dirigeants} />
             )}
+            <ExternalLinksCard siren={c.siren} />
           </div>
         </div>
 
-        <div>
-          <Link
-            href="/search"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            ← Retour à la recherche
-          </Link>
-        </div>
+        <Link
+          href="/search"
+          className="inline-block text-sm text-muted-foreground hover:text-foreground"
+        >
+          ← Retour à la recherche
+        </Link>
       </div>
     );
   }
 
+  // === PAGE PROSPECT EN PIPELINE ===
+  const lastCA = apiCompany ? getLastCA(apiCompany) : null;
+  const caForHero =
+    lastCA?.ca ?? prospect.financials[0]?.chiffreAffaires ?? null;
+  const caYear =
+    lastCA?.year ??
+    (prospect.financials[0]?.dateCloture
+      ? new Date(prospect.financials[0].dateCloture)
+          .getFullYear()
+          .toString()
+      : null);
+  const rnForHero =
+    lastCA?.resultat_net ?? prospect.financials[0]?.resultatNet ?? null;
+
   return (
     <div className="space-y-5">
-      <ProspectHeader prospect={prospect} />
+      <ProspectHero
+        denomination={prospect.denomination}
+        siren={prospect.siren}
+        siret={prospect.siret}
+        nomCommercial={prospect.nomCommercial}
+        sigle={apiCompany?.sigle}
+        categorie={prospect.categorie ?? apiCompany?.categorie_entreprise ?? null}
+        etat={prospect.etatAdministratif}
+        ca={caForHero}
+        caYear={caYear}
+        resultatNet={rnForHero}
+        dateCreation={prospect.dateCreation}
+        trancheEffectif={prospect.trancheEffectif}
+        anneeEffectif={apiCompany?.annee_tranche_effectif_salarie}
+        nombreEtablissements={apiCompany?.nombre_etablissements}
+        nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
+        sectionNaf={apiCompany?.section_activite_principale}
+      />
+
+      <ProspectActionsBar
+        id={prospect.id}
+        stage={prospect.stage}
+        priority={prospect.priority}
+        syncedAt={prospect.syncedAt}
+      />
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Colonne gauche : Identité + Labels */}
         <div className="space-y-4">
-          <InfoCard prospect={prospect} />
+          <IdentityCard
+            adresse={prospect.adresse}
+            codePostal={prospect.codePostal}
+            ville={prospect.ville}
+            latitude={prospect.latitude}
+            longitude={prospect.longitude}
+            codeNaf={prospect.codeNaf}
+            codeNaf25={apiCompany?.activite_principale_naf25}
+            formeJuridique={prospect.formeJuridique}
+            dateCreation={prospect.dateCreation}
+            siret={prospect.siret}
+            email={prospect.email}
+            telephone={prospect.telephone}
+            siteWeb={prospect.siteWeb}
+            enseignes={apiCompany?.siege?.liste_enseignes}
+            nombreEtablissements={apiCompany?.nombre_etablissements}
+            nombreEtablissementsOuverts={apiCompany?.nombre_etablissements_ouverts}
+            siren={prospect.siren}
+          />
           {prospect.latitude != null && prospect.longitude != null && (
             <MapMini
               latitude={prospect.latitude}
@@ -188,10 +241,54 @@ export default async function ProspectPage({
           <LabelsCard
             complements={apiCompany?.complements}
             idccs={
-              apiCompany?.complements?.liste_idcc ?? apiCompany?.siege?.liste_idcc
+              apiCompany?.complements?.liste_idcc ??
+              apiCompany?.siege?.liste_idcc ??
+              prospect.idccs
             }
           />
-          <WebsiteEditor prospectId={prospect.id} initial={prospect.siteWeb} />
+          <ExternalLinksCard siren={prospect.siren} />
+        </div>
+
+        {/* Colonne centrale : Finances + Dirigeants + BODACC */}
+        <div className="space-y-4">
+          <FinancialSummary
+            data={prospect.financials}
+          />
+          {extraBilans.length > 0 && prospect.financials.length === 0 && (
+            <Card className="border-border/60">
+              <CardContent className="pt-4">
+                <div className="mb-1 text-xs text-muted-foreground">
+                  Bilans disponibles via INPI/BCE (non encore importés) :
+                </div>
+                <div className="space-y-1 text-xs">
+                  {extraBilans.map((b) => (
+                    <div key={b.date_cloture_exercice}>
+                      {b.date_cloture_exercice.slice(0, 4)} — CA{" "}
+                      {b.chiffre_d_affaires
+                        ? b.chiffre_d_affaires.toLocaleString("fr-FR") + " €"
+                        : "N/C"}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {apiCompany?.dirigeants && apiCompany.dirigeants.length > 0 && (
+            <DirigeantsCard dirigeants={apiCompany.dirigeants} />
+          )}
+          <BodaccCard events={bodaccEvents} />
+        </div>
+
+        {/* Colonne droite : Historique + Audit + Notes */}
+        <div className="space-y-4">
+          <ActivityTimeline
+            prospectId={prospect.id}
+            activities={prospect.activities}
+          />
+          <WebsiteEditor
+            prospectId={prospect.id}
+            initial={prospect.siteWeb}
+          />
           <SitoscopeCard
             prospectId={prospect.id}
             siteWeb={prospect.siteWeb}
@@ -199,35 +296,7 @@ export default async function ProspectPage({
           />
           <NotesEditor prospectId={prospect.id} initial={prospect.notes} />
         </div>
-        <div className="space-y-4">
-          <FinancialSummary data={prospect.financials} />
-          {apiCompany?.dirigeants && apiCompany.dirigeants.length > 0 && (
-            <DirigeantsCard dirigeants={apiCompany.dirigeants} />
-          )}
-          <BodaccCard events={bodaccEvents} />
-        </div>
-        <div>
-          <ActivityTimeline
-            prospectId={prospect.id}
-            activities={prospect.activities}
-          />
-        </div>
       </div>
-    </div>
-  );
-}
-
-function InfoRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div>{children}</div>
     </div>
   );
 }
