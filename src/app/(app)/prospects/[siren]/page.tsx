@@ -19,6 +19,7 @@ import { DirigeantsCard } from "@/components/prospects/dirigeants-card";
 import { LabelsCard } from "@/components/prospects/labels-card";
 import { BodaccCard } from "@/components/prospects/bodacc-card";
 import { SitoscopeCard } from "@/components/prospects/sitoscope-card";
+import { SeoAuditCard } from "@/components/prospects/seo-audit-card";
 import { ExternalLinksCard } from "@/components/prospects/external-links-card";
 import { MapMini } from "@/components/map/map-mini";
 import { AddToPipelineButton } from "@/components/prospects/add-to-pipeline-button";
@@ -294,6 +295,11 @@ export default async function ProspectPage({
           <WebsiteEditor
             prospectId={prospect.id}
             initial={prospect.siteWeb}
+          />
+          <SeoAuditCard
+            prospectId={prospect.id}
+            siteWeb={prospect.siteWeb}
+            denomination={prospect.denomination}
           />
           <SitoscopeCard
             prospectId={prospect.id}

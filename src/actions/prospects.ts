@@ -9,6 +9,7 @@ import {
   getCompanyBySiren,
   getLastCA,
 } from "@/lib/api/recherche-entreprises";
+import { detectWebsite } from "@/lib/api/website-detect";
 
 type ActionResult<T = unknown> =
   | { success: true; data?: T }
@@ -51,6 +52,22 @@ export async function addToPipelineAction(
       company.siege?.liste_idcc ??
       [];
 
+    // Détection automatique du site web (timeout court, n'interrompt pas l'ajout)
+    // Ne garde que les détections à haute confiance (slug long/spécifique).
+    let detectedSite: string | null = null;
+    try {
+      const det = await detectWebsite({
+        denomination: company.nom_complet,
+        ville: siege?.libelle_commune ?? siege?.commune,
+        sigle: company.sigle,
+      });
+      if (det?.confidence === "high") {
+        detectedSite = det.url;
+      }
+    } catch {
+      // silent : pas de site détecté, pas grave
+    }
+
     const prospect = await prisma.prospect.create({
       data: {
         siren: parsed.data,
@@ -70,6 +87,7 @@ export async function addToPipelineAction(
           : undefined,
         formeJuridique: company.nature_juridique,
         etatAdministratif: company.etat_administratif,
+        siteWeb: detectedSite,
         stage: PipelineStage.A_QUALIFIER,
         assignedToId: user.id,
         // Snapshots API
