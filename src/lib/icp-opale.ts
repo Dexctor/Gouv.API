@@ -164,6 +164,7 @@ export interface IcpInput {
   codeNaf: string | null | undefined;
   codePostal: string | null | undefined;
   siteWeb: string | null | undefined;
+  siteWebStatus?: "unknown" | "candidate" | "verified" | "rejected";
   etatAdministratif: string | null | undefined;
 }
 
@@ -185,6 +186,7 @@ export interface IcpResult {
     dirigeant: DirigeantAccess;
     geo: ReturnType<typeof geoScore>;
     hasSite: boolean;
+    siteVerified: boolean;
     active: boolean;
   };
 }
@@ -192,7 +194,9 @@ export interface IcpResult {
 export function evaluateIcp(input: IcpInput): IcpResult {
   const category = categorizeBySection(input.sectionNaf);
   const active = input.etatAdministratif === "A";
+  const ceased = input.etatAdministratif === "C" || input.etatAdministratif === "F";
   const hasSite = Boolean(input.siteWeb?.trim());
+  const siteVerified = hasSite && input.siteWebStatus === "verified";
   const effectif = effectifIsTarget(input.trancheEffectif);
   const dirigeant = dirigeantAccess(input.codeNaf);
   const geo = geoScore(input.codePostal);
@@ -203,7 +207,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
   const negatives: string[] = [];
 
   // État administratif : éliminatoire si cessée
-  if (!active) {
+  if (ceased) {
     return {
       score: 0,
       verdict: "hors-cible",
@@ -217,6 +221,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
         dirigeant,
         geo,
         hasSite,
+        siteVerified,
         active,
       },
     };
@@ -237,6 +242,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
         dirigeant,
         geo,
         hasSite,
+        siteVerified,
         active,
       },
     };
@@ -272,11 +278,11 @@ export function evaluateIcp(input: IcpInput): IcpResult {
   }
 
   // Site web : 15 points + bonus commercial
-  if (hasSite) {
+  if (siteVerified) {
     score += 15;
-    positives.push("Site web présent (audit possible)");
-  } else {
-    negatives.push("Pas de site web (vente refonte difficile)");
+    positives.push("Domaine vérifié (collecte possible)");
+  } else if (hasSite) {
+    score += 5;
   }
 
   // Dirigeant : 15 points
@@ -316,6 +322,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
       dirigeant,
       geo,
       hasSite,
+      siteVerified,
       active,
     },
   };

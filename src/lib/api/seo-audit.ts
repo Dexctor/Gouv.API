@@ -1,275 +1,164 @@
-// Audit SEO préliminaire : détecte les signaux "site nul = vente facile" en
-// parcourant le HTML. Ce n'est PAS un remplacement de Sitoscope, juste une
-// première passe 100% gratuite qui tourne quand on affiche une fiche.
-//
-// Objectif Opale : identifier immédiatement sur la fiche prospect les
-// problèmes évidents qui permettent un pitch "on peut faire mieux".
+// Collecteur factuel de la page d'accueil. Il décrit uniquement ce qui a été
+// observé dans ce périmètre et ne produit ni score ni interprétation business.
 
-export interface SeoFinding {
-  id: string;
-  severity: "critical" | "high" | "medium" | "low";
-  /** Affiché dans la carte */
-  title: string;
-  /** Explication pour le pitch commercial */
-  pitch?: string;
-}
+export type ObservationStatus =
+  | "verified"
+  | "unknown"
+  | "not_found_in_scope"
+  | "collection_failed";
 
-export interface SeoAuditResult {
+export type ObservationValue = string | number | boolean | string[];
+
+export interface CollectedObservation {
+  type: string;
+  key: string;
+  value: ObservationValue;
+  source: "homepage_html";
+  scope: "homepage";
   url: string;
-  statusCode: number;
-  fetchedAt: string;
-  title: string | null;
-  description: string | null;
-  findings: SeoFinding[];
-  /** Score 0-100 (100 = parfait, 0 = catastrophique = vente facile) */
-  score: number;
-  /** Plus le ventePotentiel est élevé, plus Opale a de quoi vendre */
-  ventePotentiel: "fort" | "moyen" | "faible";
+  observedAt: string;
+  status: ObservationStatus;
+  evidence?: string;
 }
 
-// === Détecteurs ===
-
-function checkHttps(url: string, finalUrl: string): SeoFinding | null {
-  if (!url.startsWith("https://") && !finalUrl.startsWith("https://")) {
-    return {
-      id: "no-https",
-      severity: "critical",
-      title: "Pas de HTTPS",
-      pitch: "Site non sécurisé, Google pénalise, badge 'Non sécurisé' dans le navigateur.",
-    };
-  }
-  return null;
+export interface WebCollectionResult {
+  url: string;
+  finalUrl: string | null;
+  statusCode: number | null;
+  collectedAt: string;
+  status: "completed" | "collection_failed";
+  observations: CollectedObservation[];
+  error?: string;
 }
 
-function checkTitle(html: string): { title: string | null; finding: SeoFinding | null } {
-  const match = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-  const title = match?.[1]?.trim() ?? null;
-  if (!title) {
-    return {
-      title: null,
-      finding: {
-        id: "no-title",
-        severity: "critical",
-        title: "Balise <title> absente",
-        pitch: "Impossible à référencer correctement sans titre de page.",
-      },
-    };
-  }
-  if (title.length < 10) {
-    return {
-      title,
-      finding: {
-        id: "short-title",
-        severity: "high",
-        title: `Titre trop court (${title.length} car.)`,
-        pitch: "Titre sous 10 car. : Google le considère peu informatif.",
-      },
-    };
-  }
-  if (title.length > 70) {
-    return {
-      title,
-      finding: {
-        id: "long-title",
-        severity: "medium",
-        title: `Titre trop long (${title.length} car.)`,
-        pitch: "Tronqué dans les résultats Google (idéal 50-60 car.).",
-      },
-    };
-  }
-  return { title, finding: null };
+interface CollectorOptions {
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  now?: () => Date;
 }
 
-function checkDescription(html: string): {
-  description: string | null;
-  finding: SeoFinding | null;
-} {
-  const match = html.match(
-    /<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']*)["'][^>]*>/i
+function normalizeUrl(url: string): string {
+  const withProtocol = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  return new URL(withProtocol).toString();
+}
+
+function cleanText(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function unique(values: string[], limit = 20): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(
+    0,
+    limit
   );
-  const alt = html.match(
-    /<meta\s+[^>]*content=["']([^"']*)["'][^>]*name=["']description["'][^>]*>/i
+}
+
+function attribute(tag: string, name: string): string | null {
+  const match = tag.match(
+    new RegExp(`${name}\\s*=\\s*(?:["']([^"']*)["']|([^\\s>]+))`, "i")
   );
-  const description = match?.[1]?.trim() ?? alt?.[1]?.trim() ?? null;
-  if (!description) {
-    return {
-      description: null,
-      finding: {
-        id: "no-description",
-        severity: "high",
-        title: "Meta description absente",
-        pitch: "Google génère une description automatique, souvent mauvaise.",
-      },
-    };
-  }
-  if (description.length < 50) {
-    return {
-      description,
-      finding: {
-        id: "short-description",
-        severity: "medium",
-        title: `Description trop courte (${description.length} car.)`,
-      },
-    };
-  }
-  return { description, finding: null };
+  return (match?.[1] ?? match?.[2] ?? "").trim() || null;
 }
 
-function checkH1(html: string): SeoFinding | null {
-  const h1Matches = html.match(/<h1[^>]*>/gi) ?? [];
-  if (h1Matches.length === 0) {
-    return {
-      id: "no-h1",
-      severity: "high",
-      title: "Aucun H1 sur la page",
-      pitch: "Signal fort pour Google : pas de hiérarchie de contenu.",
-    };
-  }
-  if (h1Matches.length > 1) {
-    return {
-      id: "multiple-h1",
-      severity: "medium",
-      title: `${h1Matches.length} H1 sur la page`,
-      pitch: "Hiérarchie HTML cassée, pénalisée par Google.",
-    };
-  }
-  return null;
+function metaContent(html: string, attributeName: string, expected: string) {
+  const tags = html.match(/<meta\b[^>]*>/gi) ?? [];
+  const tag = tags.find(
+    (candidate) =>
+      attribute(candidate, attributeName)?.toLowerCase() === expected.toLowerCase()
+  );
+  return tag ? attribute(tag, "content") : null;
 }
 
-function checkCharset(html: string): SeoFinding | null {
-  const hasCharset = /<meta[^>]*charset=/i.test(html);
-  // Détection caractères mal encodés côté serveur : présence de séquences typiques
-  const badEncoding = /Ã©|Ã¨|Ã |Â°|Ã§/.test(html);
-  if (badEncoding) {
-    return {
-      id: "bad-encoding",
-      severity: "high",
-      title: "Caractères mal encodés visibles",
-      pitch: "Texte illisible sur la page (é, à, ç cassés) — signal amateur.",
-    };
-  }
-  if (!hasCharset) {
-    return {
-      id: "no-charset",
-      severity: "low",
-      title: "Pas de déclaration de charset",
-    };
-  }
-  return null;
+function linkHrefByRel(html: string, expected: string): string | null {
+  const tags = html.match(/<link\b[^>]*>/gi) ?? [];
+  const tag = tags.find((candidate) =>
+    (attribute(candidate, "rel") ?? "")
+      .toLowerCase()
+      .split(/\s+/)
+      .includes(expected)
+  );
+  return tag ? attribute(tag, "href") : null;
 }
 
-function checkViewport(html: string): SeoFinding | null {
-  const hasViewport = /<meta[^>]*name=["']viewport["']/i.test(html);
-  if (!hasViewport) {
-    return {
-      id: "no-viewport",
-      severity: "high",
-      title: "Pas de viewport mobile",
-      pitch: "Site non responsive, Google pénalise fortement (mobile-first).",
-    };
-  }
-  return null;
+function tagTexts(html: string, tagName: string, limit = 20): string[] {
+  const matches = html.matchAll(
+    new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi")
+  );
+  return unique([...matches].map((match) => cleanText(match[1])), limit);
 }
 
-function checkLang(html: string): SeoFinding | null {
-  const match = html.match(/<html[^>]*lang=["']([^"']*)["']/i);
-  if (!match) {
-    return {
-      id: "no-lang",
-      severity: "low",
-      title: "Attribut lang absent sur <html>",
-    };
+function addFoundOrMissing(
+  observations: CollectedObservation[],
+  base: Omit<CollectedObservation, "key" | "type" | "value" | "status">,
+  input: {
+    type: string;
+    key: string;
+    value: ObservationValue | null;
+    evidence?: string;
   }
-  return null;
+) {
+  const isMissing =
+    input.value === null ||
+    input.value === "" ||
+    (Array.isArray(input.value) && input.value.length === 0);
+  observations.push({
+    ...base,
+    type: input.type,
+    key: input.key,
+    value: isMissing ? "Non trouvé" : (input.value as ObservationValue),
+    status: isMissing ? "not_found_in_scope" : "verified",
+    evidence: input.evidence,
+  });
 }
 
-function checkOg(html: string): SeoFinding | null {
-  const hasOgTitle = /<meta[^>]*property=["']og:title["']/i.test(html);
-  const hasOgImage = /<meta[^>]*property=["']og:image["']/i.test(html);
-  if (!hasOgTitle && !hasOgImage) {
-    return {
-      id: "no-og",
-      severity: "medium",
-      title: "Pas de balises Open Graph",
-      pitch: "Partage sur Facebook/LinkedIn/WhatsApp sans aperçu visuel.",
-    };
+function resolveUrl(value: string | null, baseUrl: string): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return value;
   }
-  return null;
 }
 
-function checkFavicon(html: string): SeoFinding | null {
-  const hasFavicon =
-    /<link[^>]*rel=["'](?:icon|shortcut icon)["']/i.test(html);
-  if (!hasFavicon) {
-    return {
-      id: "no-favicon",
-      severity: "low",
-      title: "Pas de favicon",
-    };
-  }
-  return null;
-}
-
-function checkOutdated(html: string): SeoFinding | null {
-  // Année récente du copyright — si on voit 2019, 2020 → site pas maintenu
-  const years = html.match(/©\s*(\d{4})|copyright[^<]*?(\d{4})/gi) ?? [];
-  const extractedYears = years
-    .map((s) => parseInt(s.match(/\d{4}/)?.[0] ?? "0", 10))
-    .filter((n) => n > 2010 && n < 2100);
-  if (extractedYears.length === 0) return null;
-  const mostRecent = Math.max(...extractedYears);
-  const currentYear = new Date().getFullYear();
-  if (currentYear - mostRecent >= 3) {
-    return {
-      id: "outdated-copyright",
-      severity: "medium",
-      title: `Copyright figé à ${mostRecent}`,
-      pitch: `Site visiblement non maintenu depuis ${currentYear - mostRecent} ans.`,
-    };
-  }
-  return null;
-}
-
-function checkAutoAnalytics(html: string): SeoFinding | null {
-  const hasGA =
-    /googletagmanager|google-analytics|gtag\(/i.test(html) ||
-    /<script[^>]*gtag/i.test(html);
-  const hasMatomo = /matomo|piwik/i.test(html);
-  if (!hasGA && !hasMatomo) {
-    return {
-      id: "no-analytics",
-      severity: "low",
-      title: "Aucun outil de mesure détecté",
-      pitch: "Le client ne sait probablement pas combien de visiteurs il a.",
-    };
-  }
-  return null;
-}
-
-function checkStale(html: string): SeoFinding | null {
-  if (/jquery-1\.|jquery-2\./i.test(html)) {
-    return {
-      id: "old-jquery",
-      severity: "medium",
-      title: "jQuery ancien détecté",
-      pitch: "Stack technique obsolète, probable dette technique importante.",
-    };
-  }
-  return null;
-}
-
-// === Fetch + analyse ===
-
-export async function auditSeo(url: string): Promise<SeoAuditResult | null> {
-  const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+export async function collectWebObservations(
+  url: string,
+  options: CollectorOptions = {}
+): Promise<WebCollectionResult> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const observedAt = (options.now?.() ?? new Date()).toISOString();
+  let normalizedUrl: string;
 
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);
-    const res = await fetch(normalizedUrl, {
+    normalizedUrl = normalizeUrl(url);
+  } catch {
+    return {
+      url,
+      finalUrl: null,
+      statusCode: null,
+      collectedAt: observedAt,
+      status: "collection_failed",
+      observations: [],
+      error: "URL invalide",
+    };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 6000);
+
+  try {
+    const response = await fetchImpl(normalizedUrl, {
       method: "GET",
       redirect: "follow",
-      signal: ctrl.signal,
+      signal: controller.signal,
       cache: "no-store",
       headers: {
         "user-agent":
@@ -277,92 +166,191 @@ export async function auditSeo(url: string): Promise<SeoAuditResult | null> {
         accept: "text/html,application/xhtml+xml",
       },
     });
-    clearTimeout(timer);
 
-    const finalUrl = res.url;
-    const statusCode = res.status;
-
-    if (statusCode >= 400) {
+    const finalUrl = response.url || normalizedUrl;
+    if (!response.ok) {
       return {
         url: normalizedUrl,
-        statusCode,
-        fetchedAt: new Date().toISOString(),
-        title: null,
-        description: null,
-        findings: [
+        finalUrl,
+        statusCode: response.status,
+        collectedAt: observedAt,
+        status: "collection_failed",
+        observations: [
           {
-            id: "http-error",
-            severity: "critical",
-            title: `Erreur HTTP ${statusCode}`,
-            pitch: "Le site ne répond pas correctement.",
+            type: "collection",
+            key: "http_response",
+            value: response.status,
+            source: "homepage_html",
+            scope: "homepage",
+            url: normalizedUrl,
+            observedAt,
+            status: "collection_failed",
+            evidence: `Réponse HTTP ${response.status} sur la page d'accueil`,
           },
         ],
-        score: 0,
-        ventePotentiel: "fort",
+        error: `Réponse HTTP ${response.status}`,
       };
     }
 
-    // Lecture partielle (limite 200 ko pour pas exploser)
-    const buf = await res.arrayBuffer();
-    const slice = buf.slice(0, 200 * 1024);
-    const html = new TextDecoder("utf-8", { fatal: false }).decode(slice);
-
-    const findings: SeoFinding[] = [];
-    const add = (f: SeoFinding | null) => {
-      if (f) findings.push(f);
+    const buffer = await response.arrayBuffer();
+    const html = new TextDecoder("utf-8", { fatal: false }).decode(
+      buffer.slice(0, 200 * 1024)
+    );
+    const visibleText = cleanText(html);
+    const base = {
+      source: "homepage_html" as const,
+      scope: "homepage" as const,
+      url: normalizedUrl,
+      observedAt,
     };
+    const observations: CollectedObservation[] = [
+      {
+        ...base,
+        type: "collection",
+        key: "http_status",
+        value: response.status,
+        status: "verified",
+      },
+      {
+        ...base,
+        type: "collection",
+        key: "final_url",
+        value: finalUrl,
+        status: "verified",
+      },
+    ];
 
-    add(checkHttps(normalizedUrl, finalUrl));
-    const { title, finding: titleFinding } = checkTitle(html);
-    add(titleFinding);
-    const { description, finding: descFinding } = checkDescription(html);
-    add(descFinding);
-    add(checkH1(html));
-    add(checkCharset(html));
-    add(checkViewport(html));
-    add(checkLang(html));
-    add(checkOg(html));
-    add(checkFavicon(html));
-    add(checkOutdated(html));
-    add(checkAutoAnalytics(html));
-    add(checkStale(html));
+    if (!visibleText) {
+      observations.push({
+        ...base,
+        type: "collection",
+        key: "page_content",
+        value: "Aucun contenu textuel trouvé",
+        status: "not_found_in_scope",
+        evidence: "Réponse reçue, corps HTML vide ou sans texte sur la page d'accueil",
+      });
+    }
 
-    // Scoring : pondération par sévérité
-    const weights = { critical: 25, high: 12, medium: 6, low: 2 };
-    const deduction = findings.reduce((acc, f) => acc + weights[f.severity], 0);
-    const score = Math.max(0, 100 - deduction);
+    const title = tagTexts(html, "title", 1)[0] ?? null;
+    const description = metaContent(html, "name", "description");
+    const h1 = tagTexts(html, "h1", 10);
+    const h2 = tagTexts(html, "h2", 20);
+    const canonical = resolveUrl(linkHrefByRel(html, "canonical"), finalUrl);
+    const robots = metaContent(html, "name", "robots");
+    const sitemap = resolveUrl(linkHrefByRel(html, "sitemap"), finalUrl);
 
-    const ventePotentiel: SeoAuditResult["ventePotentiel"] =
-      score <= 40 ? "fort" : score <= 70 ? "moyen" : "faible";
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "title", value: title });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "meta_description", value: description });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "h1", value: h1 });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "h2", value: h2 });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "canonical", value: canonical });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "robots_meta", value: robots });
+    addFoundOrMissing(observations, base, { type: "seo_structure", key: "sitemap_link", value: sitemap });
+
+    const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)].map(
+      (match) => ({ href: attribute(match[1], "href"), text: cleanText(match[2]) })
+    );
+    const resolvedLinks = anchors
+      .map((link) => ({ ...link, absolute: resolveUrl(link.href, finalUrl) }))
+      .filter((link): link is typeof link & { absolute: string } => Boolean(link.absolute));
+    const sameHostPages = unique(
+      resolvedLinks
+        .filter((link) => {
+          try {
+            return new URL(link.absolute).host === new URL(finalUrl).host;
+          } catch {
+            return false;
+          }
+        })
+        .map((link) => link.absolute),
+      30
+    );
+    const ctaTexts = unique(
+      [
+        ...anchors.filter((link) => /devis|contact|appel|rendez-vous|rdv|demander|réserver|commander/i.test(link.text)).map((link) => link.text),
+        ...tagTexts(html, "button", 30).filter((text) => /devis|contact|appel|rendez-vous|rdv|demander|réserver|commander|envoyer/i.test(text)),
+      ],
+      15
+    );
+    const serviceTexts = unique(
+      anchors
+        .filter((link) => /service|prestation|solution|métier|activité|offre/i.test(`${link.text} ${link.href ?? ""}`))
+        .map((link) => link.text || link.href || ""),
+      15
+    );
+    const phoneLinks = unique(
+      anchors
+        .map((link) => link.href)
+        .filter((href): href is string => Boolean(href?.toLowerCase().startsWith("tel:")))
+        .map((href) => href.slice(4)),
+      10
+    );
+    const formsCount = (html.match(/<form\b/gi) ?? []).length;
+
+    addFoundOrMissing(observations, base, { type: "navigation", key: "pages_identified", value: sameHostPages });
+    addFoundOrMissing(observations, base, { type: "activity", key: "services_observed", value: serviceTexts });
+    addFoundOrMissing(observations, base, { type: "conversion_element", key: "cta_texts", value: ctaTexts });
+    observations.push({
+      ...base,
+      type: "conversion_element",
+      key: "forms_count",
+      value: formsCount,
+      status: formsCount === 0 ? "not_found_in_scope" : "verified",
+      evidence: `${formsCount} formulaire(s) trouvé(s) sur la page d'accueil`,
+    });
+    addFoundOrMissing(observations, base, { type: "contact", key: "phone_visible", value: phoneLinks });
+    observations.push({ ...base, type: "navigation", key: "links_count", value: resolvedLinks.length, status: "verified" });
+
+    const proofLinks = (pattern: RegExp) =>
+      unique(
+        resolvedLinks.filter((link) => pattern.test(`${link.text} ${link.absolute}`)).map((link) => link.absolute),
+        10
+      );
+    addFoundOrMissing(observations, base, { type: "commercial_proof", key: "realisations_pages", value: proofLinks(/réalisation|projet|chantier|portfolio|galerie/i) });
+    addFoundOrMissing(observations, base, { type: "commercial_proof", key: "testimonials_pages", value: proofLinks(/témoignage|avis|référence|client/i) });
+    addFoundOrMissing(observations, base, {
+      type: "commercial_proof",
+      key: "certifications_mentions",
+      value: unique(visibleText.match(/\b(?:RGE|Qualiopi|Qualibat|ISO\s?\d{4,5})\b/gi) ?? [], 10),
+    });
 
     return {
       url: normalizedUrl,
-      statusCode,
-      fetchedAt: new Date().toISOString(),
-      title,
-      description,
-      findings,
-      score,
-      ventePotentiel,
+      finalUrl,
+      statusCode: response.status,
+      collectedAt: observedAt,
+      status: "completed",
+      observations,
     };
-  } catch (err) {
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "Délai de collecte dépassé"
+        : error instanceof Error
+          ? error.message
+          : "Échec de la collecte";
     return {
       url: normalizedUrl,
-      statusCode: 0,
-      fetchedAt: new Date().toISOString(),
-      title: null,
-      description: null,
-      findings: [
+      finalUrl: null,
+      statusCode: null,
+      collectedAt: observedAt,
+      status: "collection_failed",
+      observations: [
         {
-          id: "fetch-error",
-          severity: "critical",
-          title: "Site inaccessible ou timeout",
-          pitch:
-            err instanceof Error ? err.message : "Impossible d'atteindre le site.",
+          type: "collection",
+          key: "collection_error",
+          value: message,
+          source: "homepage_html",
+          scope: "homepage",
+          url: normalizedUrl,
+          observedAt,
+          status: "collection_failed",
+          evidence: message,
         },
       ],
-      score: 0,
-      ventePotentiel: "fort",
+      error: message,
     };
+  } finally {
+    clearTimeout(timer);
   }
 }

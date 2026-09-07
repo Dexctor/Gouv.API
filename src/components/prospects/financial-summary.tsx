@@ -38,12 +38,11 @@ export function FinancialSummary({ data }: { data: Financial[] }) {
         <CardContent>
           <div className="rounded-md border border-dashed border-border/60 bg-muted/20 p-6 text-center">
             <div className="text-sm font-medium text-muted-foreground">
-              Aucun bilan publié
+              Aucun bilan disponible dans les données collectées
             </div>
             <p className="mt-1 text-xs text-muted-foreground/80">
-              Cette entreprise n&apos;a pas déposé ses comptes au greffe. Le
-              worker d&apos;ingestion BCE/INPI pourra compléter cette section
-              mensuellement.
+              Cela ne permet pas de conclure que l&apos;entreprise n&apos;a pas publié
+              de comptes. La collecte BCE/INPI pourra compléter cette section.
             </p>
           </div>
         </CardContent>
@@ -64,9 +63,9 @@ export function FinancialSummary({ data }: { data: Financial[] }) {
 
   const chartData = sorted.map((f) => ({
     annee: new Date(f.dateCloture).getFullYear().toString(),
-    CA: f.chiffreAffaires ?? 0,
-    EBE: f.ebe ?? 0,
-    RN: f.resultatNet ?? 0,
+    CA: f.chiffreAffaires,
+    EBE: f.ebe,
+    RN: f.resultatNet,
   }));
 
   // Un seul bilan : pas de graph qui n'a aucun sens, juste les KPIs

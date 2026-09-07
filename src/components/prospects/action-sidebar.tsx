@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import {
   Trash2,
   Loader2,
   ExternalLink,
+  Check,
 } from "lucide-react";
 import { buildPappersUrl } from "@/lib/api/pappers-url";
 
@@ -47,25 +48,46 @@ interface Props {
     latitude: number | null;
     longitude: number | null;
   };
+  auditMarkdown: string;
 }
 
 // Sidebar sticky avec toutes les actions commerciales importantes.
 // Reste visible pendant le scroll sur desktop.
-export function ActionSidebar({ prospect }: Props) {
+export function ActionSidebar({ prospect, auditMarkdown }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [dossierCopied, setDossierCopied] = useState(false);
+
+  const copyAuditPrompt = async () => {
+    try {
+      await navigator.clipboard.writeText("Analyse le dossier audit ci-dessous pour préparer une prise de contact commerciale. Appuie chaque constat sur les observations et les pages effectivement collectées. Distingue faits vérifiés, hypothèses et données manquantes. Ne déduis jamais une absence à partir d’une collecte incomplète. Propose une synthèse de l’entreprise, les points à vérifier et les prochaines actions prioritaires.\n\n" + auditMarkdown);
+      toast.success("Prompt audit copié avec le dossier");
+    } catch { toast.error("Impossible de copier le prompt"); }
+  };
+
+  const copyAuditDossier = async () => {
+    try {
+      await navigator.clipboard.writeText(auditMarkdown);
+      setDossierCopied(true);
+      toast.success("Dossier copié");
+      window.setTimeout(() => setDossierCopied(false), 2500);
+    } catch {
+      toast.error("Impossible de copier le dossier");
+    }
+  };
 
   const handleStage = (s: PipelineStage) =>
     startTransition(async () => {
       const res = await updateStageAction(prospect.id, s);
       if (!res.success) toast.error(res.error);
-      else toast.success("Stage mis à jour");
+      else toast.success("Étape commerciale mise à jour");
     });
 
   const handlePriority = (p: Priority) =>
     startTransition(async () => {
       const res = await updatePriorityAction(prospect.id, p);
       if (!res.success) toast.error(res.error);
+      else toast.success("Priorité mise à jour");
     });
 
   const handleRefresh = () =>
@@ -90,33 +112,37 @@ export function ActionSidebar({ prospect }: Props) {
     .filter(Boolean)
     .join(", ");
   const gmapsUrl =
-    prospect.latitude && prospect.longitude
+    prospect.latitude != null && prospect.longitude != null
       ? `https://www.google.com/maps/search/?api=1&query=${prospect.latitude},${prospect.longitude}`
       : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(adresseComplete)}`;
 
   const copyAddress = async () => {
     if (!adresseComplete) return;
-    await navigator.clipboard.writeText(adresseComplete);
-    toast.success("Adresse copiée");
+    try {
+      await navigator.clipboard.writeText(adresseComplete);
+      toast.success("Adresse copiée");
+    } catch { toast.error("Impossible de copier l’adresse"); }
   };
 
   const copyEmail = async () => {
     if (!prospect.email) return;
-    await navigator.clipboard.writeText(prospect.email);
-    toast.success("Email copié");
+    try {
+      await navigator.clipboard.writeText(prospect.email);
+      toast.success("Email copié");
+    } catch { toast.error("Impossible de copier l’email"); }
   };
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
       {/* Pipeline controls */}
-      <div className="rounded-lg border border-border/60 bg-card/50 p-3 space-y-3">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="p-4 space-y-3">
+        <div className="text-[11px] font-medium text-muted-foreground">
           Pipeline
         </div>
         <div className="space-y-2">
-          <Select value={prospect.stage} onValueChange={(v) => handleStage(v as PipelineStage)}>
-            <SelectTrigger className="w-full">
-              <SelectValue />
+          <Select disabled={isPending} value={prospect.stage} onValueChange={(v) => handleStage(v as PipelineStage)}>
+            <SelectTrigger aria-label="Étape commerciale" className="w-full">
+              <SelectValue>{PIPELINE_STAGES.find((stage) => stage.value === prospect.stage)?.label}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {PIPELINE_STAGES.map((s) => (
@@ -127,11 +153,12 @@ export function ActionSidebar({ prospect }: Props) {
             </SelectContent>
           </Select>
           <Select
+            disabled={isPending}
             value={prospect.priority}
             onValueChange={(v) => handlePriority(v as Priority)}
           >
-            <SelectTrigger className="w-full">
-              <SelectValue />
+            <SelectTrigger aria-label="Priorité commerciale" className="w-full">
+              <SelectValue>Priorité {PRIORITIES.find((priority) => priority.value === prospect.priority)?.label.toLowerCase()}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {PRIORITIES.map((p) => (
@@ -145,15 +172,15 @@ export function ActionSidebar({ prospect }: Props) {
       </div>
 
       {/* Contacts actions */}
-      <div className="rounded-lg border border-border/60 bg-card/50 p-3 space-y-2">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="p-4 space-y-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
           Contacts rapides
         </div>
 
         {prospect.telephone ? (
           <Button
             asChild
-            variant="outline"
+            variant="default"
             size="sm"
             className="w-full justify-start"
           >
@@ -172,7 +199,7 @@ export function ActionSidebar({ prospect }: Props) {
               asChild
               variant="outline"
               size="sm"
-              className="flex-1 justify-start"
+              className="min-w-0 flex-1 justify-start"
             >
               <a href={`mailto:${prospect.email}`}>
                 <Mail className="mr-2 h-3.5 w-3.5" />
@@ -208,14 +235,14 @@ export function ActionSidebar({ prospect }: Props) {
             </a>
           </Button>
         ) : (
-          <DisabledAction icon={Globe} label="Pas de site" />
+          <DisabledAction icon={Globe} label="Site inconnu" />
         )}
       </div>
 
       {/* Adresse + maps */}
       {adresseComplete && (
-        <div className="rounded-lg border border-border/60 bg-card/50 p-3 space-y-2">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="p-4 space-y-2">
+          <div className="text-[11px] font-medium text-muted-foreground">
             Localisation
           </div>
           <p className="text-xs leading-relaxed">{adresseComplete}</p>
@@ -244,9 +271,27 @@ export function ActionSidebar({ prospect }: Props) {
         </div>
       )}
 
+      <div className="p-4 space-y-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          Dossier Audit Opale
+        </div>
+        <Button variant="outline" className="w-full" size="sm" onClick={copyAuditDossier}>
+          {dossierCopied ? (
+            <Check className="mr-2 h-3.5 w-3.5" />
+          ) : (
+            <Copy className="mr-2 h-3.5 w-3.5" />
+          )}
+          {dossierCopied ? "Dossier copié" : "Copier dossier audit"}
+        </Button>
+        <Button variant="ghost" className="w-full" size="sm" onClick={copyAuditPrompt}><Copy className="mr-2 h-3.5 w-3.5" />Copier prompt audit</Button>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Données et sources de la collecte.
+        </p>
+      </div>
+
       {/* Vérification croisée */}
-      <div className="rounded-lg border border-border/60 bg-card/50 p-3 space-y-2">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="p-4 space-y-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
           Vérification
         </div>
         <div className="grid grid-cols-2 gap-1">
@@ -268,7 +313,7 @@ export function ActionSidebar({ prospect }: Props) {
       </div>
 
       {/* Actions secondaires */}
-      <div className="flex gap-1">
+      <div className="flex gap-1 p-4">
         <Button
           variant="outline"
           size="sm"

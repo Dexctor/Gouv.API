@@ -31,12 +31,23 @@ export async function launchSitoscopeAuditAction(
 
   const prospect = await prisma.prospect.findUnique({
     where: { id: prospectId },
-    select: { id: true, siteWeb: true, denomination: true },
+    select: {
+      id: true,
+      siteWeb: true,
+      siteWebStatus: true,
+      denomination: true,
+    },
   });
   if (!prospect?.siteWeb) {
     return {
       success: false,
       error: "Aucune URL de site web renseignée sur ce prospect",
+    };
+  }
+  if (prospect.siteWebStatus !== "verified") {
+    return {
+      success: false,
+      error: "Le domaine doit être vérifié avant de lancer Sitoscope",
     };
   }
 

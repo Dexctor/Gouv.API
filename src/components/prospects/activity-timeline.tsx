@@ -68,9 +68,9 @@ export function ActivityTimeline({
             {activities.map((a) => (
               <li
                 key={a.id}
-                className="rounded-md border border-border/60 bg-card/40 p-3"
+                className="border-l-2 border-border py-2 pl-3"
               >
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
                     {ACTIVITY_LABELS[a.type]} ·{" "}
                     {a.user.name ?? a.user.email}
@@ -90,7 +90,7 @@ export function ActivityTimeline({
               value={type}
               onValueChange={(v) => setType(v as ActivityType)}
             >
-              <SelectTrigger className="h-8 w-28 text-xs">
+              <SelectTrigger aria-label="Type d’activité" className="h-8 w-28 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -105,6 +105,7 @@ export function ActivityTimeline({
             </Select>
           </div>
           <Textarea
+            aria-label="Contenu de l’activité"
             placeholder="Ajouter une note, un résumé d'appel..."
             value={content}
             onChange={(e) => setContent(e.target.value)}

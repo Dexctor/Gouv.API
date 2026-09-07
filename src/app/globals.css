@@ -129,3 +129,26 @@
     @apply font-sans;
   }
 }
+
+/* Compact panels are scoped to the prospect workspace. */
+.prospect-workspace [data-slot="card"] {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+.prospect-workspace [data-slot="card-content"] {
+  min-width: 0;
+}
+
+.prospect-workspace [data-slot="button"] {
+  min-height: 2rem;
+}
+
+@media (max-width: 639px) {
+  .prospect-workspace [data-slot="button"],
+  .prospect-workspace [data-slot="select-trigger"] {
+    min-height: 2.5rem;
+  }
+}

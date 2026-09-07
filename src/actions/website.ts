@@ -4,7 +4,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { detectWebsite } from "@/lib/api/website-detect";
-import { auditSeo, type SeoAuditResult } from "@/lib/api/seo-audit";
+import {
+  collectWebObservations,
+  type WebCollectionResult,
+} from "@/lib/api/seo-audit";
+import { Prisma } from "@prisma/client";
 
 interface DetectResult {
   success: boolean;
@@ -25,6 +29,7 @@ export async function detectWebsiteAction(
       denomination: true,
       ville: true,
       siteWeb: true,
+      siren: true,
     },
   });
   if (!prospect) return { success: false, error: "Prospect introuvable" };
@@ -37,13 +42,17 @@ export async function detectWebsiteAction(
     return { success: false, error: "Aucun site trouvé automatiquement" };
   }
 
-  // Confiance haute = on persiste directement, sinon on propose à l'utilisateur
-  if (detected.confidence === "high" && !prospect.siteWeb) {
+  // Une réponse HTTP prouve seulement que le domaine répond : il reste candidat.
+  if (!prospect.siteWeb) {
     await prisma.prospect.update({
       where: { id: prospectId },
-      data: { siteWeb: detected.url },
+      data: {
+        siteWeb: detected.url,
+        siteWebStatus: "candidate",
+        siteWebVerifiedAt: null,
+      },
     });
-    revalidatePath(`/prospects`);
+    revalidatePath(`/prospects/${prospect.siren}`);
   }
 
   return {
@@ -56,19 +65,74 @@ export async function detectWebsiteAction(
 interface AuditResult {
   success: boolean;
   error?: string;
-  audit?: SeoAuditResult;
+  collection?: WebCollectionResult;
 }
 
-// Audit SEO préliminaire — pas besoin de session car données publiques,
-// mais on force l'auth par cohérence (pas d'exposition publique).
-export async function auditSeoAction(url: string): Promise<AuditResult> {
+export async function collectWebObservationsAction(
+  prospectId: string
+): Promise<AuditResult> {
   const session = await auth();
   if (!session?.user) return { success: false, error: "Non authentifié" };
 
-  if (!url) return { success: false, error: "URL manquante" };
+  const prospect = await prisma.prospect.findUnique({
+    where: { id: prospectId },
+    select: { siren: true, siteWeb: true, siteWebStatus: true },
+  });
+  if (!prospect?.siteWeb) {
+    return { success: false, error: "Aucun domaine renseigné" };
+  }
+  if (prospect.siteWebStatus !== "verified") {
+    return {
+      success: false,
+      error: "Le domaine doit être vérifié avant toute collecte",
+    };
+  }
 
-  const audit = await auditSeo(url);
-  if (!audit) return { success: false, error: "Audit impossible" };
+  const collection = await collectWebObservations(prospect.siteWeb);
 
-  return { success: true, audit };
+  if (collection.observations.length > 0) {
+    await prisma.$transaction(
+      collection.observations.map((observation) => {
+      const scope = `${observation.scope}:${observation.url}`;
+      return prisma.observation.upsert({
+        where: {
+          prospectId_source_scope_key: {
+            prospectId,
+            source: observation.source,
+            scope,
+            key: observation.key,
+          },
+        },
+        update: {
+          type: observation.type,
+          value: observation.value as Prisma.InputJsonValue,
+          url: observation.url,
+          observedAt: new Date(observation.observedAt),
+          status: observation.status,
+          evidence: observation.evidence ?? null,
+        },
+        create: {
+          prospectId,
+          type: observation.type,
+          key: observation.key,
+          value: observation.value as Prisma.InputJsonValue,
+          source: observation.source,
+          scope,
+          url: observation.url,
+          observedAt: new Date(observation.observedAt),
+          status: observation.status,
+          evidence: observation.evidence,
+        },
+        });
+      })
+    );
+  }
+
+  revalidatePath(`/prospects/${prospect.siren}`);
+
+  return {
+    success: collection.status === "completed",
+    error: collection.error,
+    collection,
+  };
 }

@@ -4,12 +4,18 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { PipelineStage, Priority, ActivityType } from "@prisma/client";
+import {
+  PipelineStage,
+  Priority,
+  ActivityType,
+  WebsiteStatus,
+} from "@prisma/client";
 import {
   getCompanyBySiren,
   getLastCA,
 } from "@/lib/api/recherche-entreprises";
 import { detectWebsite } from "@/lib/api/website-detect";
+import { findNaf } from "@/lib/naf-lookup";
 
 type ActionResult<T = unknown> =
   | { success: true; data?: T }
@@ -81,6 +87,7 @@ export async function addToPipelineAction(
         latitude: siege?.latitude ? Number(siege.latitude) : undefined,
         longitude: siege?.longitude ? Number(siege.longitude) : undefined,
         codeNaf: company.activite_principale,
+        libelleNaf: findNaf(company.activite_principale)?.libelle,
         trancheEffectif: company.tranche_effectif_salarie,
         dateCreation: company.date_creation
           ? new Date(company.date_creation)
@@ -88,6 +95,7 @@ export async function addToPipelineAction(
         formeJuridique: company.nature_juridique,
         etatAdministratif: company.etat_administratif,
         siteWeb: detectedSite,
+        siteWebStatus: detectedSite ? WebsiteStatus.candidate : WebsiteStatus.unknown,
         stage: PipelineStage.A_QUALIFIER,
         assignedToId: user.id,
         // Snapshots API
@@ -263,7 +271,7 @@ const urlSchema = z
 export async function updateSiteWebAction(
   id: string,
   url: string
-): Promise<ActionResult> {
+): Promise<ActionResult<{ status: WebsiteStatus }>> {
   try {
     await requireUser();
     const parsed = urlSchema.safeParse(url);
@@ -273,9 +281,67 @@ export async function updateSiteWebAction(
     if (normalized && !/^https?:\/\//.test(normalized)) {
       normalized = `https://${normalized}`;
     }
+    const current = await prisma.prospect.findUnique({
+      where: { id },
+      select: { siteWeb: true, siteWebStatus: true },
+    });
+    if (!current) return { success: false, error: "Prospect introuvable" };
+
+    const urlChanged = current.siteWeb !== (normalized || null);
+    const nextStatus = urlChanged
+      ? normalized
+        ? WebsiteStatus.candidate
+        : WebsiteStatus.unknown
+      : current.siteWebStatus;
     await prisma.prospect.update({
       where: { id },
-      data: { siteWeb: normalized || null },
+      data: {
+        siteWeb: normalized || null,
+        ...(urlChanged
+          ? {
+              siteWebStatus: normalized
+                ? WebsiteStatus.candidate
+                : WebsiteStatus.unknown,
+              siteWebVerifiedAt: null,
+            }
+          : {}),
+      },
+    });
+    revalidatePath(`/prospects`);
+    return { success: true, data: { status: nextStatus } };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Erreur",
+    };
+  }
+}
+
+export async function updateSiteWebStatusAction(
+  id: string,
+  status: WebsiteStatus
+): Promise<ActionResult> {
+  try {
+    await requireUser();
+    if (!Object.values(WebsiteStatus).includes(status)) {
+      return { success: false, error: "Statut de site invalide" };
+    }
+    const prospect = await prisma.prospect.findUnique({
+      where: { id },
+      select: { siteWeb: true },
+    });
+    if (!prospect) return { success: false, error: "Prospect introuvable" };
+    if (!prospect.siteWeb && status !== WebsiteStatus.unknown) {
+      return { success: false, error: "Aucun domaine à qualifier" };
+    }
+
+    await prisma.prospect.update({
+      where: { id },
+      data: {
+        siteWebStatus: status,
+        siteWebVerifiedAt:
+          status === WebsiteStatus.verified ? new Date() : null,
+      },
     });
     revalidatePath(`/prospects`);
     return { success: true };
@@ -346,6 +412,7 @@ export async function refreshProspectAction(
         denomination: company.nom_complet,
         etatAdministratif: company.etat_administratif,
         codeNaf: company.activite_principale,
+        libelleNaf: findNaf(company.activite_principale)?.libelle,
         trancheEffectif: company.tranche_effectif_salarie,
         formeJuridique: company.nature_juridique,
         labels: company.complements

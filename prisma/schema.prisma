@@ -95,20 +95,22 @@ model Prospect {
   etatAdministratif String?
 
   // Web / contact
-  siteWeb   String?
-  email     String?
-  telephone String?
+  siteWeb           String?
+  siteWebStatus     WebsiteStatus @default(unknown)
+  siteWebVerifiedAt DateTime?
+  email             String?
+  telephone         String?
 
   // Labels INSEE / AFNOR (snapshot API gouv : est_rge, est_qualiopi, etc.)
-  labels    Json?
+  labels     Json?
   // Dirigeants (snapshot API gouv)
   dirigeants Json?
   // IDCC convention(s) collective(s)
-  idccs     String[] @default([])
+  idccs      String[]  @default([])
   // Catégorie INSEE : PME / ETI / GE
-  categorie String?
+  categorie  String?
   // Dernière synchro API
-  syncedAt  DateTime?
+  syncedAt   DateTime?
 
   // Pipeline
   stage    PipelineStage @default(A_QUALIFIER)
@@ -125,14 +127,80 @@ model Prospect {
   lastContactedAt DateTime?
 
   // Relations
-  activities Activity[]
-  financials Financial[]
-  tags       Tag[]       @relation("ProspectTags")
+  activities   Activity[]
+  auditPages   AuditPage[]
+  financials   Financial[]
+  observations Observation[]
+  tags         Tag[]         @relation("ProspectTags")
 
   @@index([stage])
   @@index([codePostal])
   @@index([codeNaf])
   @@index([assignedToId])
+}
+
+enum WebsiteStatus {
+  unknown
+  candidate
+  verified
+  rejected
+}
+
+// Faits collectés, sans interprétation commerciale.
+model Observation {
+  id         String            @id @default(cuid())
+  prospectId String
+  prospect   Prospect          @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  type       String
+  key        String
+  value      Json
+  source     String
+  scope      String
+  url        String?
+  observedAt DateTime          @default(now())
+  status     ObservationStatus
+  evidence   String?           @db.Text
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@unique([prospectId, source, scope, key])
+  @@index([prospectId, observedAt])
+}
+
+enum ObservationStatus {
+  verified
+  unknown
+  not_found_in_scope
+  collection_failed
+}
+
+model AuditPage {
+  id               String                    @id @default(cuid())
+  prospectId       String
+  prospect         Prospect                  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  siteUrl          String
+  url              String
+  finalUrl         String?
+  title            String?
+  pageType         String
+  source           String
+  selected         Boolean                   @default(false)
+  recommended      Boolean                   @default(false)
+  collectionStatus AuditPageCollectionStatus @default(not_collected)
+  collectionError  String?
+  discoveredAt     DateTime                  @default(now())
+  lastCollectedAt  DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  @@unique([prospectId, siteUrl, url])
+  @@index([prospectId, selected])
+}
+
+enum AuditPageCollectionStatus {
+  not_collected
+  collected
+  collection_failed
 }
 
 enum PipelineStage {

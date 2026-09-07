@@ -27,18 +27,17 @@ export function QuickStats(props: Props) {
   const effectifStatus = effectifStatusFor(props.trancheEffectif);
 
   return (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border lg:grid-cols-6">
       <Stat
         icon={TrendingUp}
         label={props.caYear ? `CA ${props.caYear}` : "Chiffre d'affaires"}
-        value={props.ca != null ? formatCompactEuro(props.ca) : "N/C"}
+        value={props.ca != null ? formatCompactEuro(props.ca) : "Non renseigné"}
         match={caStatus}
-        sub={
-          props.ca != null
-            ? `seuil ${formatCompactEuro(props.caSeuil)}`
-            : `seuil ${formatCompactEuro(props.caSeuil)}`
-        }
+        sub={`seuil ${formatCompactEuro(props.caSeuil)}`}
       />
+      <Stat icon={TrendingUp} label="Résultat net"
+        value={props.resultatNet != null ? formatCompactEuro(props.resultatNet) : "Non renseigné"}
+        match="neutral" sub={props.caYear ? `Exercice ${props.caYear}` : undefined} />
       <Stat
         icon={Users}
         label="Employés"
@@ -48,7 +47,7 @@ export function QuickStats(props: Props) {
       />
       <Stat
         icon={props.icp.details.dirigeant === "direct" ? UserCheck : Phone}
-        label="Dirigeant"
+        label="Accès dirigeant"
         value={dirigeantLabel(props.icp.details.dirigeant)}
         match={dirigeantMatch(props.icp.details.dirigeant)}
         sub={dirigeantSub(props.icp.details.dirigeant)}
@@ -96,7 +95,6 @@ function Stat({
   sub?: string;
   match: Match;
 }) {
-  // Stripe colorée en haut pour signaler le match
   const stripe = {
     ok: "bg-emerald-500",
     ko: "bg-red-500",
@@ -105,15 +103,17 @@ function Stat({
   }[match];
 
   return (
-    <div className="relative overflow-hidden rounded-lg border border-border/60 bg-card/40 p-3">
-      <div className={`absolute left-0 top-0 h-0.5 w-full ${stripe}`} />
-      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="min-w-0 bg-card p-3.5">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
         <Icon className="h-3 w-3" />
         {label}
       </div>
-      <div className="mt-1 text-base font-semibold tabular-nums">{value}</div>
+      <div className="mt-2 flex items-baseline gap-2 text-base font-semibold tabular-nums">
+        <span className="break-words">{value}</span>
+        {match !== "neutral" && <span title={{ ok: "Dans la cible", ko: "Hors critère", warn: "À qualifier" }[match]} className={`h-1.5 w-1.5 shrink-0 self-center rounded-full ${stripe}`} />}
+      </div>
       {sub && (
-        <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+        <div className="mt-1 text-[11px] text-muted-foreground">
           {sub}
         </div>
       )}

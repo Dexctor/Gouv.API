@@ -63,9 +63,9 @@ export async function searchAction(
     const enriched: EnrichedCompany[] = raw.results.map((r) => {
       const apiCA = getLastCA(r);
       const dbCache = cacheBySiren.get(r.siren) ?? null;
-      const caSource: EnrichedCompany["caSource"] = apiCA?.ca
+      const caSource: EnrichedCompany["caSource"] = apiCA?.ca != null
         ? "api-gouv"
-        : dbCache?.dernierCA
+        : dbCache?.dernierCA != null
           ? "cache-bce"
           : null;
       return {
@@ -81,7 +81,7 @@ export async function searchAction(
     // le dataset Ratios BCE en parallèle (rate-limité côté OpenDataSoft).
     // On ne le fait que pour max 10 SIREN par page pour ne pas exploser le temps.
     const missingSirens = enriched
-      .filter((c) => !c.lastCA?.ca && !c.cache?.dernierCA)
+      .filter((c) => c.lastCA?.ca == null && c.cache?.dernierCA == null)
       .slice(0, 10)
       .map((c) => c.siren);
 
@@ -127,7 +127,8 @@ export async function searchAction(
             dernierResultat: bilan.resultat_net,
             dateDernierBilan: dateCloture,
           };
-          target.caSource = "cache-bce";
+          target.caSource =
+            bilan.chiffre_d_affaires != null ? "cache-bce" : null;
         }
       }
     }

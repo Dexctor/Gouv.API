@@ -11,6 +11,7 @@ import {
   getSitoscopeStatusAction,
 } from "@/actions/sitoscope";
 import type { SitoscopeAuditResult } from "@/lib/api/sitoscope";
+import type { WebsiteStatus } from "@prisma/client";
 
 function scoreColor(score: number): string {
   if (score >= 80) return "text-emerald-400";
@@ -21,10 +22,16 @@ function scoreColor(score: number): string {
 interface Props {
   prospectId: string;
   siteWeb: string | null;
+  siteWebStatus: WebsiteStatus;
   configured: boolean;
 }
 
-export function SitoscopeCard({ prospectId, siteWeb, configured }: Props) {
+export function SitoscopeCard({
+  prospectId,
+  siteWeb,
+  siteWebStatus,
+  configured,
+}: Props) {
   const [auditId, setAuditId] = useState<string | null>(null);
   const [status, setStatus] = useState<SitoscopeAuditResult | null>(null);
   const [isLaunching, startLaunch] = useTransition();
@@ -77,6 +84,11 @@ export function SitoscopeCard({ prospectId, siteWeb, configured }: Props) {
           <p className="text-xs text-muted-foreground">
             Renseignez d&apos;abord l&apos;URL du site web dans la carte
             ci-dessus.
+          </p>
+        ) : siteWebStatus !== "verified" ? (
+          <p className="text-xs text-muted-foreground">
+            Validez d&apos;abord l&apos;identité du domaine. Sitoscope ne peut pas
+            être lancé sur un domaine {siteWebStatus}.
           </p>
         ) : !auditId ? (
           <Button onClick={launch} disabled={isLaunching} size="sm">

@@ -58,33 +58,30 @@ export function DecisionBanner({ icp }: Props) {
 
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border ${config.border} ${config.bg} p-5`}
+      className="rounded-lg border border-border bg-card px-4 py-3"
     >
-      {/* Barre verticale à gauche pour renforcer visuellement */}
-      <div className={`absolute left-0 top-0 h-full w-1 ${config.dotBg}`} />
-
-      <div className="flex items-center gap-4 pl-2">
-        <Icon className={`h-10 w-10 shrink-0 ${config.text}`} strokeWidth={1.5} />
+      <div className="flex items-start gap-3">
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${config.text}`} strokeWidth={1.5} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-3">
-            <h2 className={`text-2xl font-bold ${config.text}`}>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className={`text-sm font-semibold ${config.text}`}>
               {config.label}
             </h2>
-            <span className="text-sm text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {config.subtitle}
             </span>
           </div>
-          <p className="mt-0.5 text-sm">
+          <p className="mt-1 text-xs">
             <span className="text-muted-foreground">Raison :</span>{" "}
             <span className="font-medium">{mainReason}</span>
           </p>
         </div>
-        <div className="hidden shrink-0 text-right sm:block">
-          <div className={`text-3xl font-bold tabular-nums ${config.text}`}>
-            {score}
+        <div className="shrink-0 text-right">
+          <div className="text-lg font-semibold tabular-nums">
+            {score}<span className="text-xs font-normal text-muted-foreground"> / 100</span>
           </div>
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            sur 100
+            Score ICP
           </div>
         </div>
       </div>

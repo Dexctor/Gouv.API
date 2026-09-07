@@ -8,15 +8,15 @@ interface Props {
   siren: string;
   categorie?: string | null;
   etat: string | null;
+  activite?: string | null;
+  localisation?: string | null;
 }
 
-// Header simple et dense : juste ce qu'il faut pour identifier le prospect.
-// Aucune action, aucune décision — tout est délégué à DecisionBanner et ActionSidebar.
 export function ProspectTitle(props: Props) {
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="min-w-0 break-words text-xl font-semibold tracking-tight">
           {props.denomination}
         </h1>
         {props.sigle && (
@@ -40,6 +40,13 @@ export function ProspectTitle(props: Props) {
           </Badge>
         ) : null}
       </div>
+      {(props.activite || props.localisation) && (
+        <p className="text-sm text-muted-foreground">
+          {props.activite ?? "Activité non renseignée"}
+          <span className="mx-2 text-border">/</span>
+          {props.localisation || "Localisation non renseignée"}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
         <span className="font-mono">SIREN {props.siren}</span>
         {props.nomCommercial && props.nomCommercial !== props.denomination && (
