@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Check, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TRADE_PRESETS, normalizeSearch } from "@/lib/search-presets";
 
 interface NafCode {
   code: string;
@@ -58,11 +59,19 @@ export function NafSelector({
   const filtered = useMemo(() => {
     if (!search.trim()) return CODES.slice(0, 100);
     const q = normalize(search);
+    const tradeCodes = new Set(
+      TRADE_PRESETS.filter((preset) =>
+        [...preset.aliases, preset.label].some((alias) =>
+          normalizeSearch(alias).includes(normalizeSearch(search)),
+        ),
+      ).flatMap((preset) => preset.codes),
+    );
     const scored = CODES.map((c) => {
       const libN = normalize(c.libelle);
       const codeN = c.code.toLowerCase();
       // Prio: exact code match → libellé commence par q → libellé contient q
       if (codeN.startsWith(q)) return { c, score: 0 };
+      if (tradeCodes.has(c.code)) return { c, score: 1 };
       if (libN.startsWith(q)) return { c, score: 1 };
       if (libN.includes(q)) return { c, score: 2 };
       if (codeN.includes(q)) return { c, score: 3 };
@@ -91,10 +100,16 @@ export function NafSelector({
           render={
             <Button
               type="button"
+              aria-label="Choisir les activités ou codes NAF"
               variant="outline"
               className="h-9 w-full justify-between text-left font-normal"
             >
-              <span className={cn("truncate", value.length === 0 && "text-muted-foreground")}>
+              <span
+                className={cn(
+                  "truncate",
+                  value.length === 0 && "text-muted-foreground",
+                )}
+              >
                 {value.length === 0
                   ? placeholder
                   : `${value.length} code${value.length > 1 ? "s" : ""} NAF sélectionné${value.length > 1 ? "s" : ""}`}
@@ -103,7 +118,10 @@ export function NafSelector({
             </Button>
           }
         />
-        <PopoverContent className="w-[28rem] p-0" align="start">
+        <PopoverContent
+          className="w-[28rem] max-w-[calc(100vw-2rem)] p-0"
+          align="start"
+        >
           <Command shouldFilter={false}>
             <CommandInput
               placeholder="Rechercher par libellé ou code..."
@@ -119,19 +137,20 @@ export function NafSelector({
                     <CommandItem
                       key={c.code}
                       value={c.code}
+                      disabled={!isSel && value.length >= maxSelected}
                       onSelect={() => toggle(c.code)}
                       className="flex items-center gap-2"
                     >
                       <Check
                         className={cn(
                           "h-4 w-4 shrink-0",
-                          isSel ? "opacity-100" : "opacity-0"
+                          isSel ? "opacity-100" : "opacity-0",
                         )}
                       />
                       <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
                         {c.code}
                       </span>
-                      <span className="truncate text-sm">{c.libelle}</span>
+                      <span className="text-sm">{c.libelle}</span>
                     </CommandItem>
                   );
                 })}
@@ -171,6 +190,8 @@ export function NafSelector({
 // Export helper pour afficher un libellé depuis un code
 export function getNafLabel(code: string | null | undefined): string {
   if (!code) return "—";
-  const found = CODES.find((c) => c.code === code || c.code.replace(".", "") === code.replace(".", ""));
+  const found = CODES.find(
+    (c) => c.code === code || c.code.replace(".", "") === code.replace(".", ""),
+  );
   return found ? `${found.code} — ${found.libelle}` : code;
 }

@@ -7,10 +7,18 @@ import {
   type SearchFilters,
   type CompanyResult,
   getLastCA,
+  type CompanySiege,
 } from "@/lib/api/recherche-entreprises";
 import { getBilansBySiren } from "@/lib/api/ratios-bce";
+import { resolveSearchLocation } from "@/lib/search-location";
+import {
+  matchedLocation,
+  matchesDirectSearch,
+  rankCompanies,
+} from "@/lib/search-ranking";
 
 export interface EnrichedCompany extends CompanyResult {
+  matchedLocation?: CompanySiege;
   cache?: {
     dernierCA: number | null;
     derniereMarge: number | null;
@@ -19,7 +27,11 @@ export interface EnrichedCompany extends CompanyResult {
     dateDernierBilan: Date | null;
   } | null;
   alreadyInPipeline?: boolean;
-  lastCA?: { year: string; ca: number | null; resultat_net: number | null } | null;
+  lastCA?: {
+    year: string;
+    ca: number | null;
+    resultat_net: number | null;
+  } | null;
   caSource?: "api-gouv" | "cache-bce" | null;
 }
 
@@ -36,12 +48,18 @@ export interface SearchActionResult {
 }
 
 export async function searchAction(
-  filters: SearchFilters
+  filters: SearchFilters,
+  options: { location?: string; enrich?: boolean } = {},
 ): Promise<SearchActionResult> {
   const session = await auth();
   if (!session?.user) return { success: false, error: "Non authentifié" };
 
   try {
+    if (options.location)
+      filters = {
+        ...filters,
+        ...(await resolveSearchLocation(options.location)),
+      };
     const raw = await searchCompanies(filters);
     const sirens = raw.results.map((r) => r.siren);
 
@@ -63,13 +81,15 @@ export async function searchAction(
     const enriched: EnrichedCompany[] = raw.results.map((r) => {
       const apiCA = getLastCA(r);
       const dbCache = cacheBySiren.get(r.siren) ?? null;
-      const caSource: EnrichedCompany["caSource"] = apiCA?.ca != null
-        ? "api-gouv"
-        : dbCache?.dernierCA != null
-          ? "cache-bce"
-          : null;
+      const caSource: EnrichedCompany["caSource"] =
+        apiCA?.ca != null
+          ? "api-gouv"
+          : dbCache?.dernierCA != null
+            ? "cache-bce"
+            : null;
       return {
         ...r,
+        matchedLocation: matchedLocation(r, filters),
         cache: dbCache,
         alreadyInPipeline: pipelineSet.has(r.siren),
         lastCA: apiCA,
@@ -85,12 +105,12 @@ export async function searchAction(
       .slice(0, 10)
       .map((c) => c.siren);
 
-    if (missingSirens.length > 0) {
+    if (options.enrich && missingSirens.length > 0) {
       const bceResults = await Promise.all(
         missingSirens.map(async (siren) => {
           const bilans = await getBilansBySiren(siren, 1);
           return { siren, bilan: bilans[0] };
-        })
+        }),
       );
 
       // Upsert silencieux du cache BCE + injecte dans la réponse
@@ -133,14 +153,21 @@ export async function searchAction(
       }
     }
 
+    const directLookup = /^(?:\d{9}|\d{14})$/.test(filters.q?.trim() ?? "");
+    const results = rankCompanies(
+      directLookup
+        ? enriched.filter((company) => matchesDirectSearch(company, filters))
+        : enriched,
+      filters,
+    );
     return {
       success: true,
       data: {
-        results: enriched,
-        total_results: raw.total_results,
+        results,
+        total_results: directLookup ? results.length : raw.total_results,
         page: raw.page,
         per_page: raw.per_page,
-        total_pages: raw.total_pages,
+        total_pages: directLookup ? (results.length ? 1 : 0) : raw.total_pages,
       },
     };
   } catch (err) {

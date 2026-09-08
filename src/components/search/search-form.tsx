@@ -1,545 +1,501 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
-import {
-  useQueryState,
-  parseAsString,
-  parseAsArrayOf,
-  parseAsInteger,
-  parseAsStringLiteral,
-  parseAsBoolean,
-} from "nuqs";
+import { useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, Search, RotateCcw, SlidersHorizontal, Target } from "lucide-react";
+import {
+  Loader2,
+  Search,
+  RotateCcw,
+  SlidersHorizontal,
+  ChevronDown,
+} from "lucide-react";
 import {
   TRANCHE_EFFECTIF_LABELS,
+  TRANCHE_EFFECTIF_MEDIAN,
   NAF_SECTIONS,
   NATURE_JURIDIQUE_LABELS,
 } from "@/lib/insee-labels";
+import { TRADE_PRESETS } from "@/lib/search-presets";
+import {
+  EMPTY_SEARCH,
+  buildSearchFilters,
+  searchHref,
+  type SearchState,
+} from "@/lib/search-state";
 import { NafSelector } from "./naf-selector";
 
-const ETATS = ["A", "C"] as const;
-const CATEGORIES = ["PME", "ETI", "GE"] as const;
+const selectClass =
+  "h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring";
 
-export const searchParsers = {
-  q: parseAsString.withDefault(""),
-  cp: parseAsString.withDefault(""),
-  naf: parseAsArrayOf(parseAsString).withDefault([]),
-  section: parseAsString.withDefault(""),
-  effectif: parseAsArrayOf(parseAsString).withDefault([]),
-  forme: parseAsString.withDefault(""),
-  etat: parseAsStringLiteral(ETATS).withDefault("A"),
-  categorie: parseAsArrayOf(parseAsStringLiteral(CATEGORIES)).withDefault([]),
-  caMin: parseAsInteger.withDefault(0),
-  caMax: parseAsInteger.withDefault(0),
-  rge: parseAsBoolean.withDefault(false),
-  qualiopi: parseAsBoolean.withDefault(false),
-  bio: parseAsBoolean.withDefault(false),
-  ess: parseAsBoolean.withDefault(false),
-  page: parseAsInteger.withDefault(1),
-};
-
-const SHALLOW = { shallow: true } as const;
-const COMMIT = { shallow: false } as const;
-
-// Parse "1500000", "1.5M", "1,5M", "500k"
-function parseAmount(input: string): number | null {
-  if (!input.trim()) return null;
-  const cleaned = input.trim().toLowerCase().replace(/\s/g, "").replace(",", ".");
-  const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*([kmb])?$/i);
-  if (!match) return null;
-  const n = parseFloat(match[1]);
-  if (Number.isNaN(n)) return null;
-  const unit = (match[2] ?? "").toLowerCase();
-  const mult = unit === "k" ? 1e3 : unit === "m" ? 1e6 : unit === "b" ? 1e9 : 1;
-  return Math.round(n * mult);
-}
-
-function formatAmount(n: number): string {
-  if (!n) return "";
-  if (n >= 1e6) return `${(n / 1e6).toString().replace(".", ",")}M`;
-  if (n >= 1e3) return `${(n / 1e3).toString().replace(".", ",")}k`;
-  return String(n);
-}
-
-export function SearchForm() {
+export function SearchForm({ initial }: { initial: SearchState }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-
-  const [q, setQ] = useQueryState("q", searchParsers.q.withOptions(SHALLOW));
-  const [cp, setCp] = useQueryState("cp", searchParsers.cp.withOptions(SHALLOW));
-  const [naf, setNaf] = useQueryState("naf", searchParsers.naf.withOptions(SHALLOW));
-  const [section, setSection] = useQueryState(
-    "section",
-    searchParsers.section.withOptions(SHALLOW)
-  );
-  const [effectif, setEffectif] = useQueryState(
-    "effectif",
-    searchParsers.effectif.withOptions(SHALLOW)
-  );
-  const [forme, setForme] = useQueryState(
-    "forme",
-    searchParsers.forme.withOptions(SHALLOW)
-  );
-  const [etat, setEtat] = useQueryState(
-    "etat",
-    searchParsers.etat.withOptions(SHALLOW)
-  );
-  const [categorie, setCategorie] = useQueryState(
-    "categorie",
-    searchParsers.categorie.withOptions(SHALLOW)
-  );
-  const [caMin, setCaMin] = useQueryState(
-    "caMin",
-    searchParsers.caMin.withOptions(SHALLOW)
-  );
-  const [caMax, setCaMax] = useQueryState(
-    "caMax",
-    searchParsers.caMax.withOptions(SHALLOW)
-  );
-  const [rge, setRge] = useQueryState(
-    "rge",
-    searchParsers.rge.withOptions(SHALLOW)
-  );
-  const [qualiopi, setQualiopi] = useQueryState(
-    "qualiopi",
-    searchParsers.qualiopi.withOptions(SHALLOW)
-  );
-  const [bio, setBio] = useQueryState(
-    "bio",
-    searchParsers.bio.withOptions(SHALLOW)
-  );
-  const [ess, setEss] = useQueryState(
-    "ess",
-    searchParsers.ess.withOptions(SHALLOW)
-  );
-  const [, setPage] = useQueryState(
-    "page",
-    searchParsers.page.withOptions(COMMIT)
-  );
-
-  const activeFilterCount =
-    Number(!!section) +
-    Number(!!forme) +
-    Number(categorie.length > 0) +
-    Number(caMin > 0) +
-    Number(caMax > 0) +
-    Number(rge) +
-    Number(qualiopi) +
-    Number(bio) +
-    Number(ess);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    startTransition(async () => {
-      await Promise.all([
-        setQ(q || null, COMMIT),
-        setCp(cp || null, COMMIT),
-        setNaf(naf.length ? naf : null, COMMIT),
-        setSection(section || null, COMMIT),
-        setEffectif(effectif.length ? effectif : null, COMMIT),
-        setForme(forme || null, COMMIT),
-        setEtat(etat, COMMIT),
-        setCategorie(
-          categorie.length ? (categorie as (typeof CATEGORIES)[number][]) : null,
-          COMMIT
-        ),
-        setCaMin(caMin || null, COMMIT),
-        setCaMax(caMax || null, COMMIT),
-        setRge(rge || null, COMMIT),
-        setQualiopi(qualiopi || null, COMMIT),
-        setBio(bio || null, COMMIT),
-        setEss(ess || null, COMMIT),
-        setPage(1, COMMIT),
-      ]);
-      router.refresh();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [draft, setDraft] = useState(initial);
+  const [error, setError] = useState("");
+  const [pending, startTransition] = useTransition();
+  const set = <K extends keyof SearchState>(key: K, value: SearchState[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+    setError("");
+  };
+  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  const preset = TRADE_PRESETS.find((item) => item.id === draft.trade);
+  const toggleStaff = (code: string) =>
+    set(
+      "effectif",
+      draft.effectif.includes(code)
+        ? draft.effectif.filter((item) => item !== code)
+        : [...draft.effectif, code],
+    );
+  const applyTrade = (id: string) => {
+    setDraft((current) => ({
+      ...current,
+      trade: current.trade === id ? "" : id,
+      naf: [],
+      section: "",
+    }));
+    setError("");
+  };
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    try {
+      buildSearchFilters(draft);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Vérifiez vos filtres.");
+      return;
+    }
+    startTransition(() => {
+      const href = searchHref(draft);
+      if (href === `${pathname}?${searchParams}`) router.refresh();
+      else router.push(href, { scroll: false });
     });
   };
-
   const reset = () => {
-    startTransition(async () => {
-      await Promise.all([
-        setQ(null, COMMIT),
-        setCp(null, COMMIT),
-        setNaf(null, COMMIT),
-        setSection(null, COMMIT),
-        setEffectif(null, COMMIT),
-        setForme(null, COMMIT),
-        setEtat("A", COMMIT),
-        setCategorie(null, COMMIT),
-        setCaMin(null, COMMIT),
-        setCaMax(null, COMMIT),
-        setRge(null, COMMIT),
-        setQualiopi(null, COMMIT),
-        setBio(null, COMMIT),
-        setEss(null, COMMIT),
-        setPage(1, COMMIT),
-      ]);
-      router.refresh();
-    });
+    setDraft({ ...EMPTY_SEARCH });
+    setError("");
+    startTransition(() => router.push("/search", { scroll: false }));
   };
-
-  const toggleCategorie = (cat: (typeof CATEGORIES)[number]) => {
-    const next = categorie.includes(cat)
-      ? categorie.filter((c) => c !== cat)
-      : [...categorie, cat];
-    void setCategorie(next as (typeof CATEGORIES)[number][]);
-  };
-
-  // Presets ICP Opale : applique les filtres du critère commercial en 1 clic.
-  const applyIcpPreset = (variant: "services" | "products" | "hdf") => {
-    startTransition(async () => {
-      if (variant === "services") {
-        // Services : CA >= 300k, effectif 3-49, section NAF services
-        await Promise.all([
-          setCategorie(["PME"], COMMIT),
-          setEtat("A", COMMIT),
-          setCaMin(300_000, COMMIT),
-          setCaMax(10_000_000, COMMIT),
-          setEffectif(["02"], COMMIT),
-          setSection("M", COMMIT), // Activités spécialisées (conseil)
-          setPage(1, COMMIT),
-        ]);
-      } else if (variant === "products") {
-        // Produits / commerce : CA >= 800k
-        await Promise.all([
-          setCategorie(["PME"], COMMIT),
-          setEtat("A", COMMIT),
-          setCaMin(800_000, COMMIT),
-          setCaMax(10_000_000, COMMIT),
-          setEffectif(["02"], COMMIT),
-          setSection("G", COMMIT), // Commerce
-          setPage(1, COMMIT),
-        ]);
-      } else if (variant === "hdf") {
-        // Hauts-de-France pure, sans préjuger du secteur
-        await Promise.all([
-          setCategorie(["PME"], COMMIT),
-          setEtat("A", COMMIT),
-          setEffectif(["02"], COMMIT),
-          setCp("59", COMMIT), // Nord, à affiner
-          setPage(1, COMMIT),
-        ]);
-      }
-      router.refresh();
-    });
-  };
-
   return (
     <form
-      onSubmit={handleSubmit}
-      className="grid gap-4 rounded-lg border border-border/60 bg-card/40 p-4"
+      onSubmit={submit}
+      aria-label="Recherche d’entreprises"
+      className="overflow-hidden rounded-lg border border-border bg-card"
     >
-      {/* Presets ICP Opale — chargement 1 clic de critères métier */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/50 pb-3">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <Target className="mr-1 inline h-3 w-3" />
-          Presets ICP
-        </span>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => applyIcpPreset("services")}
-          disabled={isPending}
-        >
-          Services ≥ 300 k€
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => applyIcpPreset("products")}
-          disabled={isPending}
-        >
-          Commerce ≥ 800 k€
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          onClick={() => applyIcpPreset("hdf")}
-          disabled={isPending}
-        >
-          PME Nord (59)
-        </Button>
-        <span className="text-[10px] text-muted-foreground">
-          CA max 10 M€ · effectif 3+ · active
-        </span>
-      </div>
-
-      {/* Ligne 1 : recherche principale */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
-        <div className="space-y-1 md:col-span-2">
-          <Label htmlFor="q">Recherche textuelle</Label>
-          <Input
-            id="q"
-            name="q"
-            placeholder="Dénomination, SIREN, dirigeant..."
-            value={q}
-            onChange={(e) => void setQ(e.target.value || null)}
-          />
+      <fieldset disabled={pending} className="min-w-0 space-y-3 p-4">
+        <legend className="sr-only">Critères de recherche</legend>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="search-name">Nom de l’entreprise</Label>
+            <Input
+              id="search-name"
+              className="h-10"
+              value={draft.q}
+              onChange={(event) => set("q", event.target.value)}
+              placeholder="Raison sociale, nom commercial ou SIREN"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="search-location">
+              Ville, code postal ou département
+            </Label>
+            <Input
+              id="search-location"
+              className="h-10"
+              value={draft.cp}
+              onChange={(event) => set("cp", event.target.value)}
+              placeholder="Dunkerque, 59240 ou 59, 62"
+              aria-describedby="location-help"
+            />
+            <p id="location-help" className="text-xs text-muted-foreground">
+              Commune entière par son nom · plusieurs codes séparés par une
+              virgule.
+            </p>
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="cp">Code postal</Label>
-          <Input
-            id="cp"
-            name="cp"
-            inputMode="numeric"
-            maxLength={5}
-            placeholder="59140"
-            value={cp}
-            onChange={(e) => void setCp(e.target.value || null)}
-          />
-        </div>
-        <div className="space-y-1 md:col-span-2">
-          <Label htmlFor="naf">Codes NAF</Label>
-          <NafSelector
-            value={naf}
-            onChange={(codes) =>
-              void setNaf(codes.length ? (codes as string[]) : [])
-            }
-            placeholder="Boulangerie, BTP, services..."
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="effectif">Tranche effectif</Label>
-          <Select
-            value={effectif[0] ?? "all"}
-            onValueChange={(v) =>
-              void setEffectif(v === "all" ? [] : ([v] as string[]))
-            }
-          >
-            <SelectTrigger id="effectif">
-              <SelectValue placeholder="Toutes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Toutes</SelectItem>
-              {Object.entries(TRANCHE_EFFECTIF_LABELS).map(([code, label]) => (
-                <SelectItem key={code} value={code}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="etat">État</Label>
-          <Select
-            value={etat}
-            onValueChange={(v) => void setEtat(v as "A" | "C")}
-          >
-            <SelectTrigger id="etat">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="A">Active</SelectItem>
-              <SelectItem value="C">Cessée</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* Ligne 2 : filtres avancés + actions */}
-      <div className="flex flex-wrap items-end gap-2">
-        <Popover>
-          <PopoverTrigger
-            render={
-              <Button type="button" variant="outline" size="sm">
-                <SlidersHorizontal className="mr-2 h-4 w-4" />
-                Filtres avancés
-                {activeFilterCount > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="ml-2 h-5 px-1.5 text-[10px]"
-                  >
-                    {activeFilterCount}
-                  </Badge>
-                )}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>Métier à prospecter</Label>
+            <span className="text-xs text-muted-foreground">
+              Combinable avec tous vos critères
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {TRADE_PRESETS.map((item) => (
+              <Button
+                key={item.id}
+                type="button"
+                size="sm"
+                className="min-h-8 aria-pressed:border-primary/60 aria-pressed:bg-primary/15 aria-pressed:text-foreground"
+                variant={draft.trade === item.id ? "secondary" : "outline"}
+                aria-pressed={draft.trade === item.id}
+                title={item.description}
+                onClick={() => applyTrade(item.id)}
+              >
+                {item.label}
               </Button>
-            }
-          />
-          <PopoverContent className="w-96 p-4" align="start">
-            <div className="grid gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs">Catégorie d&apos;entreprise</Label>
-                <div className="flex gap-1">
-                  {CATEGORIES.map((c) => (
-                    <Button
-                      type="button"
-                      key={c}
-                      size="xs"
-                      variant={categorie.includes(c) ? "default" : "outline"}
-                      onClick={() => toggleCategorie(c)}
-                    >
-                      {c}
-                    </Button>
-                  ))}
+            ))}
+          </div>
+          {preset && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground">Périmètre :</span>{" "}
+              {preset.description}
+            </p>
+          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-1.5">
+            <Label>Effectif salarié</Label>
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full justify-between font-normal"
+                    aria-label="Choisir les tranches d’effectif"
+                  >
+                    {draft.effectif.length
+                      ? `${draft.effectif.length} tranche${draft.effectif.length > 1 ? "s" : ""} sélectionnée${draft.effectif.length > 1 ? "s" : ""}`
+                      : "Tous les effectifs"}
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                }
+              />
+              <PopoverContent
+                align="start"
+                className="max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto p-3"
+              >
+                <div className="mb-3 flex gap-2">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => set("effectif", ["02", "03", "11", "12"])}
+                  >
+                    3–49 salariés
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => set("effectif", [])}
+                  >
+                    Tout effacer
+                  </Button>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label htmlFor="caMin" className="text-xs">
-                    CA minimum
-                  </Label>
-                  <Input
-                    id="caMin"
-                    placeholder="300k, 1M, 5M..."
-                    defaultValue={formatAmount(caMin)}
-                    onBlur={(e) => {
-                      const n = parseAmount(e.target.value);
-                      void setCaMin(n ?? 0);
-                    }}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="caMax" className="text-xs">
-                    CA maximum
-                  </Label>
-                  <Input
-                    id="caMax"
-                    placeholder="10M, 100M..."
-                    defaultValue={formatAmount(caMax)}
-                    onBlur={(e) => {
-                      const n = parseAmount(e.target.value);
-                      void setCaMax(n ?? 0);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor="section" className="text-xs">
-                  Section NAF
-                </Label>
-                <Select
-                  value={section || "all"}
-                  onValueChange={(v) => void setSection(v === "all" ? "" : v)}
-                >
-                  <SelectTrigger id="section">
-                    <SelectValue placeholder="Toutes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Toutes</SelectItem>
-                    {NAF_SECTIONS.map((s) => (
-                      <SelectItem key={s.code} value={s.code}>
-                        {s.code} — {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1">
-                <Label htmlFor="forme" className="text-xs">
-                  Forme juridique
-                </Label>
-                <Select
-                  value={forme || "all"}
-                  onValueChange={(v) => void setForme(v === "all" ? "" : v)}
-                >
-                  <SelectTrigger id="forme">
-                    <SelectValue placeholder="Toutes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Toutes</SelectItem>
-                    {Object.entries(NATURE_JURIDIQUE_LABELS).map(([code, label]) => (
-                      <SelectItem key={code} value={code}>
+                <div className="space-y-2.5">
+                  {Object.entries(TRANCHE_EFFECTIF_LABELS)
+                    .sort(
+                      ([a], [b]) =>
+                        TRANCHE_EFFECTIF_MEDIAN[a] - TRANCHE_EFFECTIF_MEDIAN[b],
+                    )
+                    .map(([code, label]) => (
+                      <label
+                        key={code}
+                        className="flex cursor-pointer items-center gap-2 text-sm"
+                      >
+                        <Checkbox
+                          checked={draft.effectif.includes(code)}
+                          onCheckedChange={() => toggleStaff(code)}
+                        />
                         {label}
-                      </SelectItem>
+                      </label>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs">Labels qualité</Label>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <CheckboxRow
-                    checked={rge}
-                    onCheckedChange={(v) => void setRge(v || null)}
-                    label="RGE (BTP)"
-                  />
-                  <CheckboxRow
-                    checked={qualiopi}
-                    onCheckedChange={(v) => void setQualiopi(v || null)}
-                    label="Qualiopi"
-                  />
-                  <CheckboxRow
-                    checked={bio}
-                    onCheckedChange={(v) => void setBio(v || null)}
-                    label="Bio"
-                  />
-                  <CheckboxRow
-                    checked={ess}
-                    onCheckedChange={(v) => void setEss(v || null)}
-                    label="ESS"
-                  />
                 </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="search-ca-min">CA minimum (€)</Label>
+            <Input
+              id="search-ca-min"
+              className="h-10"
+              value={draft.caMin}
+              onChange={(event) => set("caMin", event.target.value)}
+              placeholder="300k"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="search-ca-max">CA maximum (€)</Label>
+            <Input
+              id="search-ca-max"
+              className="h-10"
+              value={draft.caMax}
+              onChange={(event) => set("caMax", event.target.value)}
+              placeholder="800k"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="search-state">État administratif</Label>
+            <select
+              id="search-state"
+              className={selectClass}
+              value={draft.etat}
+              onChange={(event) => set("etat", event.target.value)}
+            >
+              <option value="A">Actives</option>
+              <option value="C">Cessées</option>
+              <option value="all">Tous les états</option>
+            </select>
+          </div>
+        </div>
+        {(draft.caMin || draft.caMax) && (
+          <p className="text-xs text-muted-foreground">
+            Un filtre de CA retient les entreprises dont le CA est connu dans la
+            source de recherche. Un CA inconnu n’est jamais assimilé à zéro.
+          </p>
+        )}
+        {draft.effectif.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Effectifs :{" "}
+            {draft.effectif
+              .map((code) => TRANCHE_EFFECTIF_LABELS[code])
+              .join(" · ")}
+            . Tranches INSEE, sans estimation d’un effectif exact.
+          </p>
+        )}
+        <details className="border-t border-border pt-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+            Filtres avancés
+            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
+          </summary>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label>Activité ou codes NAF précis</Label>
+              <NafSelector
+                value={draft.naf}
+                onChange={(codes) => set("naf", codes)}
+                placeholder="Activité, métier ou code NAF"
+              />
+              {preset && (
+                <p className="text-xs text-muted-foreground">
+                  Les codes précis affinent le métier sélectionné.
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="search-section">Secteur d’activité</Label>
+              <select
+                id="search-section"
+                className={selectClass}
+                value={draft.section}
+                onChange={(event) => set("section", event.target.value)}
+              >
+                <option value="">Tous les secteurs</option>
+                {NAF_SECTIONS.map((section) => (
+                  <option key={section.code} value={section.code}>
+                    {section.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="search-region">Zone régionale</Label>
+              <select
+                id="search-region"
+                className={selectClass}
+                value={draft.region}
+                onChange={(event) => set("region", event.target.value)}
+              >
+                <option value="">Toutes les régions</option>
+                <option value="32">Hauts-de-France</option>
+                <option value="11">Île-de-France</option>
+                <option value="28">Normandie</option>
+                <option value="44">Grand Est</option>
+                {draft.region &&
+                  !["32", "11", "28", "44"].includes(draft.region) && (
+                    <option value={draft.region}>Région {draft.region}</option>
+                  )}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="search-legal">Forme juridique</Label>
+              <select
+                id="search-legal"
+                className={selectClass}
+                value={draft.forme}
+                onChange={(event) => set("forme", event.target.value)}
+              >
+                <option value="">Toutes les formes</option>
+                {Object.entries(NATURE_JURIDIQUE_LABELS).map(
+                  ([code, label]) => (
+                    <option key={code} value={code}>
+                      {label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Catégorie d’entreprise</Label>
+              <div className="flex flex-wrap gap-3">
+                {["PME", "ETI", "GE"].map((category) => (
+                  <label
+                    key={category}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      checked={draft.categorie.includes(category)}
+                      onCheckedChange={() =>
+                        set(
+                          "categorie",
+                          draft.categorie.includes(category)
+                            ? draft.categorie.filter(
+                                (item) => item !== category,
+                              )
+                            : [...draft.categorie, category],
+                        )
+                      }
+                    />
+                    {category}
+                  </label>
+                ))}
               </div>
             </div>
-          </PopoverContent>
-        </Popover>
-
-        <div className="flex-1" />
-
-        <Button
-          type="button"
-          variant="outline"
-          onClick={reset}
-          disabled={isPending}
-          size="sm"
-        >
-          <RotateCcw className="mr-2 h-4 w-4" />
-          Réinitialiser
-        </Button>
-        <Button type="submit" disabled={isPending} size="sm">
-          {isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Search className="mr-2 h-4 w-4" />
-          )}
-          Rechercher
-        </Button>
+            <div className="space-y-2">
+              <Label>Labels et certifications</Label>
+              <div className="flex flex-wrap gap-3">
+                {(["rge", "qualiopi", "bio", "ess"] as const).map((key) => (
+                  <label key={key} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={draft[key]}
+                      onCheckedChange={(value) => set(key, value === true)}
+                    />
+                    {
+                      {
+                        rge: "RGE",
+                        qualiopi: "Qualiopi",
+                        bio: "Bio",
+                        ess: "ESS",
+                      }[key]
+                    }
+                  </label>
+                ))}
+              </div>
+            </div>
+            <label className="flex items-start gap-2 text-sm md:col-span-2 xl:col-span-3">
+              <Checkbox
+                checked={draft.enrich}
+                onCheckedChange={(value) => set("enrich", value === true)}
+              />
+              <span>
+                Compléter les CA manquants via INPI/BCE{" "}
+                <span className="text-muted-foreground">
+                  (plus lent, jusqu’à 10 entreprises par page)
+                </span>
+              </span>
+            </label>
+            <div className="flex flex-wrap items-center gap-2 md:col-span-2 xl:col-span-3">
+              <span className="text-xs text-muted-foreground">
+                Profils commerciaux :
+              </span>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    trade: "services",
+                    naf: [],
+                    section: "",
+                    categorie: ["PME"],
+                    effectif: ["02", "03", "11", "12"],
+                    caMin: "300k",
+                    caMax: "10M",
+                    etat: "A",
+                  }))
+                }
+              >
+                Services ≥ 300k
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    trade: "",
+                    naf: [],
+                    section: "G",
+                    categorie: ["PME"],
+                    effectif: ["02", "03", "11", "12"],
+                    caMin: "800k",
+                    caMax: "10M",
+                    etat: "A",
+                  }))
+                }
+              >
+                Commerce ≥ 800k
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  setDraft((current) => ({
+                    ...current,
+                    cp: "59",
+                    region: "",
+                    categorie: ["PME"],
+                    etat: "A",
+                    effectif: ["02", "03", "11", "12"],
+                  }))
+                }
+              >
+                PME Nord (59)
+              </Button>
+            </div>
+          </div>
+        </details>
+        {error && (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {error}
+          </p>
+        )}
+      </fieldset>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-4 py-3 md:px-5">
+        <p role="status" className="text-xs text-muted-foreground">
+          {pending
+            ? "Recherche en cours…"
+            : dirty
+              ? "Critères modifiés — lancez la recherche pour les appliquer."
+              : "Recherchez par nom, par métier ou par zone."}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            onClick={reset}
+          >
+            <RotateCcw className="h-4 w-4" />
+            Tout réinitialiser
+          </Button>
+          <Button type="submit" disabled={pending}>
+            {pending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+            Rechercher
+          </Button>
+        </div>
       </div>
     </form>
-  );
-}
-
-function CheckboxRow({
-  checked,
-  onCheckedChange,
-  label,
-}: {
-  checked: boolean;
-  onCheckedChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2">
-      <Checkbox
-        checked={checked}
-        onCheckedChange={(v) => onCheckedChange(v === true)}
-      />
-      <span>{label}</span>
-    </label>
   );
 }

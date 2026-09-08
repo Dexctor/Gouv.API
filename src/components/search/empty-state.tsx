@@ -12,7 +12,7 @@ export function EmptySearchState({ query }: Props) {
 
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border/60 bg-card/20 p-10 text-center">
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
         <SearchX className="h-6 w-6 text-muted-foreground" />
       </div>
       <div className="space-y-1">
@@ -21,14 +21,19 @@ export function EmptySearchState({ query }: Props) {
           {query ? (
             <>
               La recherche pour <span className="font-medium">{query}</span>{" "}
-              n&apos;a donné aucun résultat dans l&apos;API gouvernementale.
-              Essayez via nos sources alternatives :
+              n&apos;a donné aucun résultat avec ces critères. Élargissez la
+              zone, retirez une tranche d’effectif ou une borne de CA.
             </>
           ) : (
-            "Lancez une recherche ou consultez des sources alternatives."
+            "Essayez un métier plus large, retirez un filtre ou élargissez la zone géographique."
           )}
         </p>
       </div>
+      <p className="max-w-md text-xs text-muted-foreground">
+        Un CA inconnu peut exclure une entreprise d’une recherche avec bornes de
+        CA. Retirez ces bornes pour inclure les entreprises sans CA publié dans
+        la source.
+      </p>
       <div className="flex flex-wrap justify-center gap-2">
         <Button asChild size="sm" variant="outline">
           <a href={pappersUrl} target="_blank" rel="noopener noreferrer">

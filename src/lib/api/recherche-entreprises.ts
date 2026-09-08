@@ -251,7 +251,7 @@ function withEnrichment(filters: SearchFilters): SearchFilters {
 }
 
 export async function searchCompanies(
-  filters: SearchFilters
+  filters: SearchFilters,
 ): Promise<SearchResponse> {
   const perPage = Math.min(filters.per_page ?? 25, 25);
   const normalized = withEnrichment({ ...filters, per_page: perPage });
@@ -261,11 +261,12 @@ export async function searchCompanies(
   return limiter.acquire(async () => {
     const res = await fetch(url, {
       headers: { accept: "application/json" },
-      cache: "no-store",
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) {
       throw new Error(
-        `recherche-entreprises: HTTP ${res.status} ${res.statusText}`
+        `recherche-entreprises: HTTP ${res.status} ${res.statusText}`,
       );
     }
     return (await res.json()) as SearchResponse;
@@ -273,7 +274,7 @@ export async function searchCompanies(
 }
 
 export async function getCompanyBySiren(
-  siren: string
+  siren: string,
 ): Promise<CompanyResult | null> {
   const clean = siren.replace(/\s/g, "");
   if (!/^\d{9}$/.test(clean)) return null;
@@ -306,7 +307,7 @@ export interface NearPointFilters {
 }
 
 export async function searchNearPoint(
-  filters: NearPointFilters
+  filters: NearPointFilters,
 ): Promise<SearchResponse> {
   const perPage = Math.min(filters.per_page ?? 25, 25);
   const radius = Math.min(filters.radius ?? 5, 50);
@@ -330,9 +331,7 @@ export async function searchNearPoint(
       cache: "no-store",
     });
     if (!res.ok) {
-      throw new Error(
-        `near_point: HTTP ${res.status} ${res.statusText}`
-      );
+      throw new Error(`near_point: HTTP ${res.status} ${res.statusText}`);
     }
     return (await res.json()) as SearchResponse;
   });
