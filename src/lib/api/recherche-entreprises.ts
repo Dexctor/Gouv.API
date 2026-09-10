@@ -250,6 +250,27 @@ function withEnrichment(filters: SearchFilters): SearchFilters {
   };
 }
 
+export class SearchApiError extends Error {
+  constructor(public readonly kind: "upstream" | "timeout" | "cancelled" | "invalid-response", message: string) {
+    super(message);
+    this.name = "SearchApiError";
+  }
+}
+
+export function validateSearchResponse(value: unknown): SearchResponse {
+  const data = value as SearchResponse | null;
+  if (!data || !Array.isArray(data.results) ||
+      ![data.total_results, data.total_pages, data.page, data.per_page].every(Number.isSafeInteger) ||
+      data.total_results < 0 || data.total_pages < 0 || data.page < 1 || data.per_page < 1 ||
+      data.results.length > data.per_page || data.results.length > data.total_results ||
+      (data.total_results > 0 && data.total_pages < 1) ||
+      (data.total_results > 0 && data.page <= data.total_pages && data.results.length === 0) ||
+      data.results.some((company) => !company || typeof company.siren !== "string" || typeof company.nom_complet !== "string")) {
+    throw new SearchApiError("invalid-response", "Le service de recherche a renvoyé une réponse incomplète ou incohérente. Relancez la recherche.");
+  }
+  return data;
+}
+
 export async function searchCompanies(
   filters: SearchFilters,
 ): Promise<SearchResponse> {
@@ -259,17 +280,22 @@ export async function searchCompanies(
   const url = `${API_URL}/search?${qs}`;
 
   return limiter.acquire(async () => {
-    const res = await fetch(url, {
-      headers: { accept: "application/json" },
-      next: { revalidate: 60 },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) {
-      throw new Error(
-        `recherche-entreprises: HTTP ${res.status} ${res.statusText}`,
-      );
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new SearchApiError("upstream", `Service de recherche indisponible (HTTP ${res.status}).`);
+      return validateSearchResponse(await res.json());
+    } catch (error) {
+      if (error instanceof SearchApiError) throw error;
+      if (error instanceof Error && error.name === "TimeoutError")
+        throw new SearchApiError("timeout", "Le service de recherche n’a pas répondu dans le délai de 15 secondes.");
+      if (error instanceof Error && error.name === "AbortError")
+        throw new SearchApiError("cancelled", "La recherche a été annulée.");
+      throw new SearchApiError("upstream", "Impossible de joindre le service de recherche ou de lire sa réponse.");
     }
-    return (await res.json()) as SearchResponse;
   });
 }
 

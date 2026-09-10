@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { differenceInYears } from "date-fns";
 import {
   Building2,
@@ -62,7 +63,9 @@ export function SearchWorkspace({
   totalPages: number;
   state: SearchState;
 }) {
-  const [sort, setSort] = useState<WorkspaceSort>("opale");
+  const searchParams = useSearchParams();
+  const requestedSort = searchParams.get("sort");
+  const [sort, setSort] = useState<WorkspaceSort>(SEARCH_SORTS.includes(requestedSort as SearchSort) ? requestedSort as SearchSort : "opale");
   const [crmFilter, setCrmFilter] = useState<CrmFilter>("all");
   const [selectedSiren, setSelectedSiren] = useState<string | null>(null);
   const [adding, setAdding] = useState<Set<string>>(() => new Set());
@@ -73,7 +76,7 @@ export function SearchWorkspace({
   );
   const visible = useMemo(() => {
     const filtered = enriched.filter(({ company }) =>
-      crmFilter === "all" ? true : crmFilter === "crm" ? Boolean(company.crm || company.alreadyInPipeline) : !company.crm && !company.alreadyInPipeline,
+      crmFilter === "all" ? true : crmFilter === "crm" ? Boolean(company.crm || company.alreadyInPipeline || added.has(company.siren)) : !company.crm && !company.alreadyInPipeline && !added.has(company.siren),
     );
     if (sort !== "opale") return sortCompanies(filtered.map(({ company }) => company), sort);
     return [...filtered]
@@ -83,21 +86,21 @@ export function SearchWorkspace({
         a.company.nom_complet.localeCompare(b.company.nom_complet, "fr"),
       )
       .map(({ company }) => company);
-  }, [crmFilter, enriched, sort]);
+  }, [added, crmFilter, enriched, sort]);
   const selected = data.find((company) => company.siren === selectedSiren) ?? null;
   const metrics = useMemo(() => ({
     priority: enriched.filter(({ score }) => score.verdict === "prioritaire").length,
-    crm: enriched.filter(({ company }) => Boolean(company.crm || company.alreadyInPipeline)).length,
+    crm: enriched.filter(({ company }) => Boolean(company.crm || company.alreadyInPipeline || added.has(company.siren))).length,
     mapped: enriched.filter(({ company }) => {
       const location = company.matchedLocation ?? company.siege;
-      return Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
+      return Boolean(location?.latitude?.trim() && location?.longitude?.trim()) && Number.isFinite(Number(location?.latitude)) && Number.isFinite(Number(location?.longitude));
     }).length,
-  }), [enriched]);
+  }), [added, enriched]);
   const points = useMemo<SearchMapPoint[]>(() => visible.flatMap((company) => {
     const location = company.matchedLocation ?? company.siege;
     const latitude = Number(location?.latitude);
     const longitude = Number(location?.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+    if (!location?.latitude?.trim() || !location?.longitude?.trim() || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
     return [{
       siren: company.siren,
       name: company.nom_complet,
@@ -105,9 +108,9 @@ export function SearchWorkspace({
       latitude,
       longitude,
       priority: priority(company).verdict,
-      inCrm: Boolean(company.crm || company.alreadyInPipeline),
+      inCrm: Boolean(company.crm || company.alreadyInPipeline || added.has(company.siren)),
     }];
-  }), [visible]);
+  }), [added, visible]);
   const select = useCallback((siren: string) => setSelectedSiren(siren), []);
   const add = async (siren: string) => {
     setAdding((current) => new Set(current).add(siren));
@@ -140,7 +143,7 @@ export function SearchWorkspace({
           <span><b>{metrics.mapped}</b> localisés</span>
         </div>
       </div>
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2.5">
             <div className="flex items-center gap-1" aria-label="Filtre CRM">
@@ -151,7 +154,7 @@ export function SearchWorkspace({
               ))}
             </div>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              Trier
+              Trier cette page
               <select value={sort} onChange={(event) => setSort(event.target.value as WorkspaceSort)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
                 <option value="opale">Priorité Opale</option>
                 {SEARCH_SORTS.map((key) => <option key={key} value={key}>{SORT_LABELS[key]}</option>)}
@@ -159,7 +162,7 @@ export function SearchWorkspace({
             </label>
           </div>
           <div className="hidden grid-cols-[minmax(210px,2.2fr)_minmax(120px,1fr)_minmax(125px,1fr)_130px] gap-3 border-b border-border bg-muted/30 px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground md:grid">
-            <span>Entreprise</span><span>Localisation</span><span>Taille & données</span><span>Priorité</span>
+            <span>Entreprise / site connu</span><span>Commune</span><span>Effectif / CA</span><span>Priorité</span>
           </div>
           <div className="divide-y divide-border">
             {visible.map((company) => {
@@ -172,7 +175,7 @@ export function SearchWorkspace({
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{company.nom_complet}</span>
                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">{nafLabel(company.activite_principale)}</span>
-                  <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground"><span className={company.etat_administratif === "A" ? "text-emerald-400" : ""}>{company.etat_administratif === "A" ? "Active" : "Cessée"}</span><span>{companyAge(company.date_creation)}</span>{inCrm && <span className="text-violet-300">CRM</span>}</span>
+                  <span className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground"><span className={company.etat_administratif === "A" ? "text-emerald-400" : ""}>{company.etat_administratif === "A" ? "Active" : "Cessée"}</span><span>{companyAge(company.date_creation)}</span>{inCrm && <span className="text-violet-300">CRM</span>}<span>{company.crm?.siteWebStatus === "verified" && company.crm.siteWeb ? "Site vérifié" : company.crm?.siteWebStatus === "candidate" ? "Site à vérifier" : "Site non renseigné"}</span></span>
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="h-3.5 w-3.5 shrink-0" />{location?.libelle_commune ?? location?.commune ?? "Inconnue"}<br />{location?.code_postal ?? ""}</span>
                 <span className="text-xs"><span className="block font-medium">{trancheEffectifLabel(company.tranche_effectif_salarie)}</span><span className="mt-1 block text-muted-foreground">{companyCA(company) != null ? `CA ${formatSearchEuro(companyCA(company))}` : "CA inconnu"}</span></span>
@@ -183,10 +186,13 @@ export function SearchWorkspace({
           </div>
           <footer className="flex items-center justify-between border-t border-border px-3 py-2.5 text-xs text-muted-foreground">
             <span>Page {page} / {totalPages}</span>
-            <span className="flex gap-1"><Button asChild size="sm" variant="ghost" disabled={page === 1}><Link href={searchHref(state, page - 1, sort === "opale" ? "relevance" : sort)}><ChevronLeft className="h-4 w-4" />Précédent</Link></Button><Button asChild size="sm" variant="ghost" disabled={page >= totalPages}><Link href={searchHref(state, page + 1, sort === "opale" ? "relevance" : sort)}>Suivant<ChevronRight className="h-4 w-4" /></Link></Button></span>
+            <span className="flex gap-1">
+              {page > 1 ? <Button asChild size="sm" variant="ghost"><Link prefetch={false} href={searchHref(state, page - 1, sort === "opale" ? "relevance" : sort)}><ChevronLeft className="h-4 w-4" />Précédent</Link></Button> : <Button size="sm" variant="ghost" disabled>Précédent</Button>}
+              {page < totalPages ? <Button asChild size="sm" variant="ghost"><Link prefetch={false} href={searchHref(state, page + 1, sort === "opale" ? "relevance" : sort)}>Suivant<ChevronRight className="h-4 w-4" /></Link></Button> : <Button size="sm" variant="ghost" disabled>Suivant</Button>}
+            </span>
           </footer>
         </div>
-        <aside className="overflow-hidden rounded-lg border border-border bg-card xl:sticky xl:top-4 xl:h-fit">
+        <aside className="overflow-hidden rounded-lg border border-border bg-card 2xl:sticky 2xl:top-4 2xl:h-fit">
           <div className="flex items-center justify-between border-b border-border px-3 py-2.5"><span className="text-sm font-medium">Carte des résultats</span><span className="text-xs text-muted-foreground">{points.length} repères</span></div>
           <SearchMap points={points} selectedSiren={selectedSiren} onSelect={select} />
           <p className="px-3 py-2 text-xs text-muted-foreground">Cliquez un repère ou une ligne pour examiner l’entreprise. Les couleurs suivent la priorité Opale.</p>
@@ -202,15 +208,16 @@ export function SearchWorkspace({
 function CompanyDrawer({ company, score, inCrm, busy, onAdd }: { company: EnrichedCompany; score: ReturnType<typeof priority>; inCrm: boolean; busy: boolean; onAdd: () => void }) {
   const location = company.matchedLocation ?? company.siege;
   const meta = VERDICT_META[score.verdict];
-  const site = company.crm?.siteWeb;
+  const site = company.crm?.siteWebStatus === "verified" || company.crm?.siteWebStatus === "candidate" ? company.crm.siteWeb : null;
   return <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
     <SheetHeader className="border-b border-border pr-12"><SheetTitle>{company.nom_complet}</SheetTitle><SheetDescription>{nafLabel(company.activite_principale)} · SIREN {company.siren}</SheetDescription></SheetHeader>
     <div className="space-y-5 p-4">
       <section><p className={`inline-flex rounded border px-2 py-1 text-xs font-medium ${meta.badgeClass}`}>{score.score}/100 · {meta.label}</p><p className="mt-2 text-xs text-muted-foreground">Alignement observable avec la cible Opale, pas une probabilité d’achat. Confiance {score.details.confidence}. {score.details.caSource === "inconnu" && "CA inconnu : aucun point n’est attribué pour ce critère."}</p></section>
-      <DrawerSection title="Données factuelles"><Fact label="Adresse" value={[location?.adresse, location?.code_postal, location?.libelle_commune ?? location?.commune].filter(Boolean).join(", ") || "Inconnue"} /><Fact label="Effectif" value={trancheEffectifLabel(company.tranche_effectif_salarie)} /><Fact label="CA" value={companyCA(company) != null ? formatSearchEuro(companyCA(company)) : "Inconnu"} /><Fact label="Site internet" value={site ? "Présent dans le CRM" : "Non renseigné"} /></DrawerSection>
-      <DrawerSection title="Lecture Opale"><SignalList title="Critères certains" values={score.positives} tone="positive" /><SignalList title="Écarts factuels" values={score.negatives} tone="neutral" /><SignalList title="Hypothèses à vérifier" values={[...score.signals, ...(companyCA(company) == null ? ["CA non publié ou non disponible"] : []), ...(site ? [] : ["Présence et qualité du site à vérifier", "Demandes, devis, planning et suivi client à explorer"])]} tone="neutral" /></DrawerSection>
-      {inCrm && company.crm ? <Button asChild className="w-full"><Link href={`/prospects/${company.siren}`}><Building2 className="h-4 w-4" />Ouvrir la fiche CRM</Link></Button> : <Button className="w-full" disabled={busy} onClick={onAdd}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{busy ? "Ajout…" : "Ajouter au CRM"}</Button>}
-      {site && <Button asChild variant="outline" className="w-full"><a href={site} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" />Ouvrir le site connu</a></Button>}
+      <DrawerSection title="Données factuelles"><Fact label="Adresse" value={[location?.adresse, location?.code_postal, location?.libelle_commune ?? location?.commune].filter(Boolean).join(", ") || "Inconnue"} /><Fact label="Effectif" value={trancheEffectifLabel(company.tranche_effectif_salarie)} /><Fact label="CA" value={companyCA(company) != null ? formatSearchEuro(companyCA(company)) : "Inconnu"} /><Fact label="Site internet" value={site ? company.crm?.siteWebStatus === "verified" ? "Site vérifié" : "Candidat à vérifier" : "Non renseigné"} /></DrawerSection>
+      <DrawerSection title="Informations manquantes"><SignalList title="À renseigner" values={[...(companyCA(company) == null ? ["Chiffre d’affaires inconnu"] : []), ...(!company.tranche_effectif_salarie ? ["Effectif inconnu"] : []), ...(site ? [] : ["Présence d’un site non vérifiée"])]} tone="neutral" /></DrawerSection>
+      <DrawerSection title="Lecture Opale"><SignalList title="Critères certains" values={score.positives} tone="positive" /><SignalList title="Écarts factuels" values={score.negatives} tone="neutral" /><SignalList title="Hypothèses à vérifier" values={[...score.signals, "Demandes, devis, planning et suivi client à explorer en entretien"]} tone="neutral" /></DrawerSection>
+      {inCrm ? <Button asChild className="w-full"><Link href={`/prospects/${company.siren}`}><Building2 className="h-4 w-4" />Ouvrir la fiche CRM</Link></Button> : <Button className="w-full" disabled={busy} onClick={onAdd}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{busy ? "Ajout…" : "Ajouter au CRM"}</Button>}
+      {site && <Button asChild variant="outline" className="w-full"><a href={site} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" />{company.crm?.siteWebStatus === "verified" ? "Ouvrir le site vérifié" : "Examiner le site candidat"}</a></Button>}
     </div>
   </SheetContent>;
 }

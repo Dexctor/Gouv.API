@@ -46,7 +46,11 @@ async function Results({ state, page }: { state: SearchState; page: number }) {
   if (result.data.results.length === 0)
     return (
       <div className="space-y-3">
-        <EmptySearchState query={state.q || state.cp} />
+        {result.data.total_results === 0 ? <EmptySearchState query={state.q || state.cp} /> : (
+          <p role="status" className="rounded-lg border border-border bg-card p-4 text-sm">
+            Cette page n’existe plus. {result.data.total_results.toLocaleString("fr-FR")} entreprises correspondent aux critères.
+          </p>
+        )}
         {page > 1 && (
           <Button asChild variant="outline">
             <Link href={searchHref(state)}>
@@ -166,7 +170,7 @@ export default async function SearchPage({
           <Suspense
             key={JSON.stringify([state, page])}
             fallback={
-              <div role="status" aria-label="Recherche des entreprises" className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div role="status" aria-label="Recherche des entreprises" className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_340px]">
                 <div className="space-y-2 rounded-lg border border-border bg-card p-3">
                   <p className="px-1 text-sm text-muted-foreground">Recherche et qualification des entreprises…</p>
                   {[0, 1, 2, 3, 4].map((row) => <Skeleton key={row} className="h-[74px] w-full motion-reduce:animate-none" />)}

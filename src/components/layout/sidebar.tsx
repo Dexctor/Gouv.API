@@ -61,14 +61,14 @@ export function AppSidebar({ user }: { user: Session["user"] }) {
                 const active =
                   item.href === "/"
                     ? pathname === "/"
-                    : pathname.startsWith(item.href);
+                    : pathname.startsWith(item.href) || (item.href === "/pipeline" && pathname.startsWith("/prospects/"));
                 const Icon = item.icon;
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       isActive={active}
                       tooltip={item.label}
-                      render={<Link href={item.href} />}
+                      render={<Link href={item.href} aria-current={active ? "page" : undefined} />}
                     >
                       <Icon className="h-4 w-4" />
                       <span>{item.label}</span>

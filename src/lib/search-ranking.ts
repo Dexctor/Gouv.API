@@ -1,3 +1,4 @@
+import { getLastCA } from "./api/recherche-entreprises";
 import type {
   CompanyResult,
   CompanySiege,
@@ -87,7 +88,9 @@ export function matchesDirectSearch(
     !matchedLocation(company, filters)
   )
     return false;
-  const ca = companyCA(company);
+  // Direct lookups must use the same source as upstream financial filters.
+  // Enrichment/cache writes must never change membership of an identical query.
+  const ca = getLastCA(company)?.ca ?? null;
   if (
     (filters.ca_min != null || filters.ca_max != null) &&
     (ca == null ||

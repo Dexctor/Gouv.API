@@ -311,3 +311,60 @@ test("la résolution de commune utilise la BAN et refuse les homonymes ambigus",
     /Plusieurs communes/,
   );
 });
+
+
+test("une recherche directe ne dépend pas d’un enrichissement financier précédent", () => {
+  const raw = company();
+  const cached = company({ cache: { dernierCA: 500000, derniereMarge: null, dernierEBE: null, dernierResultat: null, dateDernierBilan: null } });
+  const filters = { q: raw.siren, ca_min: 300000, ca_max: 800000 };
+  assert.equal(matchesDirectSearch(raw, filters), false);
+  assert.equal(matchesDirectSearch(cached, filters), false);
+  assert.equal(matchesDirectSearch(company({ finances: { "2025": { ca: 500000 } } }), filters), true);
+});
+
+test("les choix équivalents produisent la même URL et réinitialisent la page", () => {
+  const a = { ...EMPTY_SEARCH, q: "  Dupont  ", naf: ["4391B", "43.91B"], effectif: ["03", "02", "03"] };
+  const b = { ...EMPTY_SEARCH, q: "Dupont", naf: ["43.91B"], effectif: ["02", "03"] };
+  assert.equal(searchHref(a), searchHref(b));
+  assert.deepEqual(buildSearchFilters(a), buildSearchFilters(b));
+  assert.equal(new URL(searchHref(a), "http://localhost").searchParams.has("page"), false);
+});
+
+test("commune, métier, effectif et CA atteignent ensemble la requête serveur", async (t) => {
+  const { searchCompanies } = await import("./api/recherche-entreprises");
+  const seen: URL[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    seen.push(url);
+    return new Response(JSON.stringify(url.pathname.includes("search/")
+      ? { features: [{ properties: { city: "Coudekerque-Branche", citycode: "59155", postcode: "59210" } }] }
+      : { results: [], total_results: 0, page: 1, per_page: 25, total_pages: 0 }));
+  });
+  const filters = { ...buildSearchFilters({ ...EMPTY_SEARCH, trade: "couverture", effectif: ["03", "02"], caMin: "300k", caMax: "800k" }), ...await resolveSearchLocation("  COUDÉKERQUE branche ") };
+  const result = await searchCompanies(filters);
+  assert.equal(result.total_results, 0);
+  const query = seen.at(-1)!.searchParams;
+  assert.equal(query.get("code_commune"), "59155");
+  assert.equal(query.get("activite_principale"), "43.91B,43.99A");
+  assert.equal(query.get("tranche_effectif_salarie"), "02,03");
+  assert.equal(query.get("ca_min"), "300000");
+  assert.equal(query.get("ca_max"), "800000");
+  assert.equal(query.get("etat_administratif"), "A");
+});
+
+test("erreurs HTTP, délais et réponses incohérentes ne deviennent jamais zéro résultat", async (t) => {
+  const { searchCompanies, validateSearchResponse } = await import("./api/recherche-entreprises");
+  const zero = { results: [], total_results: 0, page: 1, per_page: 25, total_pages: 0 };
+  assert.deepEqual(validateSearchResponse(zero), zero);
+  assert.throws(() => validateSearchResponse({ ...zero, total_results: 8, total_pages: 1 }), /incohérente/);
+  assert.throws(() => validateSearchResponse({}), /incohérente/);
+  // An empty page beyond the total is distinct from an empty search.
+  assert.equal(validateSearchResponse({ ...zero, total_results: 8, total_pages: 1, page: 2 }).total_results, 8);
+  const mock = t.mock.method(globalThis, "fetch", async () => new Response("Unavailable", { status: 503 }));
+  await assert.rejects(searchCompanies({}), /HTTP 503/);
+  await assert.rejects(resolveSearchLocation("Dunkerque"), /localisation indisponible/);
+  mock.mock.mockImplementation(async () => { throw new DOMException("Timeout", "TimeoutError"); });
+  await assert.rejects(searchCompanies({}), /15 secondes/);
+  mock.mock.mockImplementation(async () => { throw new DOMException("Cancelled", "AbortError"); });
+  await assert.rejects(searchCompanies({}), /annulée/);
+});

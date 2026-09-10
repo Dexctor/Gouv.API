@@ -39,7 +39,8 @@ export async function searchAddress(
       : { cache: "no-store" as const }),
     signal: AbortSignal.timeout(8000),
   });
-  if (!res.ok) return [];
+  if (!res.ok) throw new Error(`Service de localisation indisponible (HTTP ${res.status}).`);
   const data = (await res.json()) as AddressResponse;
-  return data.features ?? [];
+  if (!Array.isArray(data.features)) throw new Error("Réponse invalide du service de localisation.");
+  return data.features;
 }

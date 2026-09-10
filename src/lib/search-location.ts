@@ -29,7 +29,8 @@ export async function resolveSearchLocation(
   if (!input.trim()) return {};
   const numeric = numericLocation(input);
   if (numeric) return numeric;
-  const candidates = await searchAddress(input, 10, "municipality");
+  const normalized = normalizeSearch(input);
+  const candidates = await searchAddress(normalized, 10, "municipality");
   const exact = candidates.filter(
     (candidate) =>
       normalizeSearch(candidate.properties.city) === normalizeSearch(input),

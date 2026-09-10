@@ -49,6 +49,7 @@ export function SearchForm({ initial }: { initial: SearchState }) {
   };
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
   const preset = TRADE_PRESETS.find((item) => item.id === draft.trade);
+  const advancedCount = [draft.q, draft.region, draft.naf.length, draft.section, draft.forme, draft.etat !== "A", draft.categorie.length, draft.rge, draft.qualiopi, draft.bio, draft.ess, draft.enrich].filter(Boolean).length;
   const toggleStaff = (code: string) =>
     set(
       "effectif",
@@ -59,7 +60,7 @@ export function SearchForm({ initial }: { initial: SearchState }) {
   const applyTrade = (id: string) => {
     setDraft((current) => ({
       ...current,
-      trade: current.trade === id ? "" : id,
+      trade: id,
       naf: [],
       section: "",
     }));
@@ -92,66 +93,21 @@ export function SearchForm({ initial }: { initial: SearchState }) {
     >
       <fieldset disabled={pending} className="min-w-0 space-y-3 p-4">
         <legend className="sr-only">Critères de recherche</legend>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
-            <Label htmlFor="search-name">Nom de l’entreprise</Label>
-            <Input
-              id="search-name"
-              className="h-10"
-              value={draft.q}
-              onChange={(event) => set("q", event.target.value)}
-              placeholder="Raison sociale, nom commercial ou SIREN"
-            />
+            <Label htmlFor="search-trade">Activité / métier</Label>
+            <select id="search-trade" className={selectClass} value={draft.trade} onChange={(event) => applyTrade(event.target.value)}>
+              <option value="">Tous les métiers</option>
+              {TRADE_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="search-location">
-              Ville, code postal ou département
-            </Label>
-            <Input
-              id="search-location"
-              className="h-10"
-              value={draft.cp}
-              onChange={(event) => set("cp", event.target.value)}
-              placeholder="Dunkerque, 59240 ou 59, 62"
-              aria-describedby="location-help"
-            />
-            <p id="location-help" className="text-xs text-muted-foreground">
-              Commune entière par son nom · plusieurs codes séparés par une
-              virgule.
-            </p>
+            <Label htmlFor="search-location">Ville / commune</Label>
+            <Input id="search-location" className="h-10" value={draft.cp} onChange={(event) => set("cp", event.target.value)} placeholder="Dunkerque ou code postal" list="local-municipalities" />
+            <datalist id="local-municipalities">
+              {["Dunkerque", "Gravelines", "Bergues", "Coudekerque-Branche", "Grande-Synthe"].map((city) => <option key={city} value={city} />)}
+            </datalist>
           </div>
-        </div>
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Label>Métier à prospecter</Label>
-            <span className="text-xs text-muted-foreground">
-              Combinable avec tous vos critères
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {TRADE_PRESETS.map((item) => (
-              <Button
-                key={item.id}
-                type="button"
-                size="sm"
-                className="min-h-8 aria-pressed:border-primary/60 aria-pressed:bg-primary/15 aria-pressed:text-foreground"
-                variant={draft.trade === item.id ? "secondary" : "outline"}
-                aria-pressed={draft.trade === item.id}
-                title={item.description}
-                onClick={() => applyTrade(item.id)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </div>
-          {preset && (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              <span className="font-medium text-foreground">Périmètre :</span>{" "}
-              {preset.description}
-            </p>
-          )}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
             <Label>Effectif salarié</Label>
             <Popover>
@@ -160,12 +116,12 @@ export function SearchForm({ initial }: { initial: SearchState }) {
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-10 w-full justify-between font-normal"
+                    className="h-10 w-full justify-between overflow-hidden font-normal [&>span]:truncate"
                     aria-label="Choisir les tranches d’effectif"
                   >
-                    {draft.effectif.length
-                      ? `${draft.effectif.length} tranche${draft.effectif.length > 1 ? "s" : ""} sélectionnée${draft.effectif.length > 1 ? "s" : ""}`
-                      : "Tous les effectifs"}
+                    <span className="min-w-0 truncate">{draft.effectif.length
+                      ? draft.effectif.slice().sort().join(",") === "02,03" ? "3–9 salariés" : draft.effectif.map((code) => TRANCHE_EFFECTIF_LABELS[code]).join(" / ")
+                      : "Tous les effectifs"}</span>
                     <ChevronDown className="h-4 w-4" />
                   </Button>
                 }
@@ -222,6 +178,11 @@ export function SearchForm({ initial }: { initial: SearchState }) {
               </PopoverContent>
             </Popover>
           </div>
+        </div>
+        {preset && <p className="text-xs text-muted-foreground">{preset.description}</p>}
+        <details open={draft.caMin || draft.caMax ? true : undefined} className="text-sm">
+          <summary className="w-fit cursor-pointer py-1 text-muted-foreground">Chiffre d’affaires connu (facultatif)</summary>
+          <div className="mt-2 grid max-w-lg grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="search-ca-min">CA minimum (€)</Label>
             <Input
@@ -242,6 +203,26 @@ export function SearchForm({ initial }: { initial: SearchState }) {
               placeholder="800k"
             />
           </div>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Les entreprises au CA inconnu sont exclues si une borne est renseignée.</p>
+        </details>
+        <details className="border-t border-border pt-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+            Filtres avancés · {advancedCount} actif{advancedCount > 1 ? "s" : ""}
+            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
+          </summary>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="search-name">Nom de l’entreprise</Label>
+            <Input
+              id="search-name"
+              className="h-10"
+              value={draft.q}
+              onChange={(event) => set("q", event.target.value)}
+              placeholder="Raison sociale, nom commercial ou SIREN"
+            />
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="search-state">État administratif</Label>
             <select
@@ -255,29 +236,6 @@ export function SearchForm({ initial }: { initial: SearchState }) {
               <option value="all">Tous les états</option>
             </select>
           </div>
-        </div>
-        {(draft.caMin || draft.caMax) && (
-          <p className="text-xs text-muted-foreground">
-            Un filtre de CA retient les entreprises dont le CA est connu dans la
-            source de recherche. Un CA inconnu n’est jamais assimilé à zéro.
-          </p>
-        )}
-        {draft.effectif.length > 0 && (
-          <p className="text-xs text-muted-foreground">
-            Effectifs :{" "}
-            {draft.effectif
-              .map((code) => TRANCHE_EFFECTIF_LABELS[code])
-              .join(" · ")}
-            . Tranches INSEE, sans estimation d’un effectif exact.
-          </p>
-        )}
-        <details className="border-t border-border pt-3">
-          <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-            <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
-            Filtres avancés
-            <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
-          </summary>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="space-y-1.5">
               <Label>Activité ou codes NAF précis</Label>
               <NafSelector

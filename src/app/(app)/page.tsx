@@ -5,14 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PIPELINE_STAGES } from "@/types/prospect";
 import { PipelineStage } from "@prisma/client";
-import { formatDistanceToNow } from "date-fns";
+import { subDays, formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import { ArrowUpRight, Search, Activity, ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = { title: "Tableau de bord — Gouv-API" };
 
 export default async function DashboardPage() {
-  const [counts, recentActivity, openProspects] = await Promise.all([
+  const staleBefore = subDays(new Date(), 14);
+  const openStages: PipelineStage[] = ["A_QUALIFIER", "CONTACTE", "RDV", "PROPOSITION"];
+  const [counts, recentActivity, openProspects, staleCount, nextToQualify] = await Promise.all([
     prisma.prospect.groupBy({ by: ["stage"], _count: { _all: true } }),
     prisma.activity.findMany({
       orderBy: { createdAt: "desc" }, take: 5,
@@ -26,13 +28,18 @@ export default async function DashboardPage() {
       orderBy: [{ priority: "desc" }, { updatedAt: "asc" }], take: 6,
       select: { id: true, siren: true, denomination: true, ville: true, stage: true, priority: true, updatedAt: true },
     }),
+    prisma.prospect.count({ where: { stage: { in: openStages }, updatedAt: { lt: staleBefore } } }),
+    prisma.prospect.findMany({
+      where: { stage: "A_QUALIFIER" }, orderBy: [{ priority: "desc" }, { updatedAt: "asc" }], take: 3,
+      select: { siren: true, denomination: true, ville: true },
+    }),
   ]);
   const countByStage = new Map<PipelineStage, number>();
   for (const c of counts) countByStage.set(c.stage, c._count._all);
   const total = counts.reduce((sum, item) => sum + item._count._all, 0);
   const active = total - (countByStage.get("SIGNE") ?? 0) - (countByStage.get("PERDU") ?? 0);
   const indicators = [
-    { label: "Prospects au total", value: total, detail: "Dans votre portefeuille" },
+    { label: "Sans mise à jour depuis 14 jours", value: staleCount, detail: "Dossiers ouverts à examiner" },
     { label: "Dossiers ouverts", value: active, detail: "De la qualification à la proposition" },
     { label: "À qualifier", value: countByStage.get("A_QUALIFIER") ?? 0, detail: "Première étape de prospection" },
     { label: "Clients signés", value: countByStage.get("SIGNE") ?? 0, detail: "Prospects convertis" },
@@ -51,11 +58,15 @@ export default async function DashboardPage() {
         {indicators.map((item) => (
           <div key={item.label} className="bg-card px-4 py-4 md:px-5">
             <p className="text-xs text-muted-foreground">{item.label}</p>
-            <p className="my-2 text-3xl font-semibold tracking-tight tabular-nums">{item.value.toLocaleString("fr-FR")}</p>
+            <p className="my-2 text-2xl font-semibold tracking-tight tabular-nums">{item.value.toLocaleString("fr-FR")}</p>
             <p className="text-xs text-muted-foreground">{item.detail}</p>
           </div>
         ))}
       </section>
+      {nextToQualify.length > 0 && <section aria-label="Prochaines qualifications" className="rounded-lg border border-border bg-card px-4 py-3">
+        <h2 className="mb-2 text-sm font-semibold">À qualifier ensuite</h2>
+        <div className="grid gap-2 md:grid-cols-3">{nextToQualify.map((prospect) => <Link key={prospect.siren} href={`/prospects/${prospect.siren}`} className="flex min-w-0 items-center justify-between gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"><span className="min-w-0"><span className="block truncate font-medium">{prospect.denomination}</span><span className="text-xs text-muted-foreground">{prospect.ville ?? "Ville inconnue"}</span></span><ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" /></Link>)}</div>
+      </section>}
       <section aria-labelledby="pipeline-title" className="rounded-lg border border-border bg-card">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <h2 id="pipeline-title" className="text-sm font-semibold">Répartition du pipeline</h2>
@@ -88,7 +99,7 @@ export default async function DashboardPage() {
                   <Link href={`/prospects/${prospect.siren}`} className="group flex items-center gap-3 px-4 py-3.5 hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-ring">
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-medium group-hover:underline">{prospect.denomination}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{prospect.ville ?? "Ville non renseignée"} · Mis à jour {formatDistanceToNow(prospect.updatedAt, { locale: fr, addSuffix: true })}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{prospect.updatedAt < staleBefore && <span className="text-amber-300">Sans mise à jour depuis 14 j · </span>}{prospect.ville ?? "Ville non renseignée"} · Mis à jour {formatDistanceToNow(prospect.updatedAt, { locale: fr, addSuffix: true })}</p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1.5"><Badge variant="outline" className="text-[11px]">{PIPELINE_STAGES.find((stage) => stage.value === prospect.stage)?.label}</Badge>{prospect.priority === "HIGH" && <span className="text-[11px] text-amber-400">Priorité haute</span>}</div>
                     <ArrowUpRight className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />

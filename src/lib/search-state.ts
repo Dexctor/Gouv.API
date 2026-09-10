@@ -67,6 +67,18 @@ export const SORT_LABELS: Record<SearchSort, string> = {
   name: "Nom A–Z",
 };
 
+/** Stable URL and upstream criteria; array selection order carries no meaning. */
+export function normalizeSearchState(input: SearchState): SearchState {
+  const state = { ...input };
+  for (const key of Object.keys(state) as (keyof SearchState)[]) {
+    const value = state[key];
+    if (Array.isArray(value)) Object.assign(state, { [key]: [...new Set(value.map((item) => item.trim()).filter(Boolean))].sort() });
+    else if (typeof value === "string") Object.assign(state, { [key]: value.trim().replace(/\s+/g, " ") });
+  }
+  state.naf = [...new Set(state.naf.map((code) => findNaf(code)?.code ?? code))].sort();
+  return state;
+}
+
 export function readSearchState(
   params: Record<string, string | string[] | undefined>,
 ): SearchState {
@@ -80,7 +92,7 @@ export function readSearchState(
       Object.assign(state, { [key]: value === "true" || value === "1" });
     else Object.assign(state, { [key]: value || EMPTY_SEARCH[key] });
   }
-  return state;
+  return normalizeSearchState(state);
 }
 
 export function searchHref(
@@ -90,7 +102,7 @@ export function searchHref(
   submitted = true,
 ) {
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(state)) {
+  for (const [key, value] of Object.entries(normalizeSearchState(state))) {
     if (Array.isArray(value)) {
       if (value.length) params.set(key, value.join(","));
     } else if (value !== "" && value !== false) params.set(key, String(value));
@@ -123,6 +135,7 @@ export function buildSearchFilters(
   state: SearchState,
   page = 1,
 ): SearchFilters {
+  state = normalizeSearchState(state);
   const caMin = parseAmount(state.caMin),
     caMax = parseAmount(state.caMax);
   if (caMin != null && caMax != null && caMin > caMax)
