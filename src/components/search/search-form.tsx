@@ -174,14 +174,22 @@ export function SearchForm({ initial }: { initial: SearchState }) {
                 align="start"
                 className="max-h-80 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto p-3"
               >
-                <div className="mb-3 flex gap-2">
+                <div className="mb-3 flex flex-wrap gap-2">
                   <Button
                     type="button"
                     size="xs"
                     variant="outline"
-                    onClick={() => set("effectif", ["02", "03", "11", "12"])}
+                    onClick={() => set("effectif", ["02", "03"])}
                   >
-                    3–49 salariés
+                    Cœur de cible · 3–9
+                  </Button>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => set("effectif", ["11"])}
+                  >
+                    10–19 à analyser
                   </Button>
                   <Button
                     type="button"

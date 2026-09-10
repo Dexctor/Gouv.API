@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { SearchForm } from "@/components/search/search-form";
-import { SearchResultsTable } from "@/components/search/search-results-table";
+import { SearchWorkspace } from "@/components/search/search-workspace";
 import { EmptySearchState } from "@/components/search/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -58,7 +58,7 @@ async function Results({ state, page }: { state: SearchState; page: number }) {
       </div>
     );
   return (
-    <SearchResultsTable
+      <SearchWorkspace
       key={JSON.stringify([state, page])}
       data={result.data.results}
       total={result.data.total_results}
@@ -166,20 +166,12 @@ export default async function SearchPage({
           <Suspense
             key={JSON.stringify([state, page])}
             fallback={
-              <div
-                role="status"
-                aria-label="Recherche des entreprises"
-                className="space-y-2"
-              >
-                <p className="text-sm text-muted-foreground">
-                  Recherche des entreprises…
-                </p>
-                {[0, 1, 2, 3].map((row) => (
-                  <Skeleton
-                    key={row}
-                    className="h-24 w-full motion-reduce:animate-none"
-                  />
-                ))}
+              <div role="status" aria-label="Recherche des entreprises" className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_380px]">
+                <div className="space-y-2 rounded-lg border border-border bg-card p-3">
+                  <p className="px-1 text-sm text-muted-foreground">Recherche et qualification des entreprises…</p>
+                  {[0, 1, 2, 3, 4].map((row) => <Skeleton key={row} className="h-[74px] w-full motion-reduce:animate-none" />)}
+                </div>
+                <Skeleton className="h-[280px] w-full rounded-lg motion-reduce:animate-none" />
               </div>
             }
           >
@@ -194,7 +186,7 @@ export default async function SearchPage({
               Commencez par un métier ou une zone
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Par exemple : Couverture + Dunkerque + 3–49 salariés. Les filtres
+              Par exemple : Couverture + Dunkerque + 3–9 salariés. Les filtres
               sont appliqués quand vous lancez la recherche.
             </p>
           </div>

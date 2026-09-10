@@ -2,12 +2,8 @@
 // Centralisée ici pour être réutilisée : badge hero, table de recherche,
 // filtres CSV, scoring, alertes BODACC, etc.
 //
-// Critères affinés avec Antoine + Hugo (terrain) :
-// - CA : 300k€ services / 800k€ produits (seuil bas), 10M€ plafond haut
-// - Effectif : idéal 3+, acceptable 2, éliminatoire 0-1
-// - Dirigeant accessible : varie selon NAF (artisans OK, avocats NO)
-// - Site web : requis (sinon pas d'audit possible)
-// - Géo : Hauts-de-France prioritaire
+// Le score mesure uniquement l'alignement observable avec la cible Opale.
+// Il ne prédit ni l'intention d'achat, ni les processus internes de l'entreprise.
 
 // === Sections NAF considérées comme PRESTATAIRE DE SERVICES ===
 // Référence INSEE NAF rév.2 sections G à U.
@@ -124,8 +120,8 @@ export function caSeuilFor(sectionNaf: string | null | undefined): number {
 // "01" = 1-2 salariés (à tenter)
 // "02" = 3-5 (idéal)
 // "03" = 6-9 (idéal)
-// "11" = 10-19 (OK)
-// "12" = 20-49 (OK)
+// "11" = 10-19 (à vérifier : la source ne distingue pas 10-15 de 16-19)
+// "12" = 20-49 (hors cœur de cible)
 // "21"+ = 50+ (trop gros, déprioriser)
 export function effectifIsTarget(code: string | null | undefined): {
   target: "idéal" | "acceptable" | "trop petit" | "trop grand" | "inconnu";
@@ -134,11 +130,10 @@ export function effectifIsTarget(code: string | null | undefined): {
   if (!code) return { target: "inconnu", score: 0 };
   const c = code.trim();
   if (["NN", "00"].includes(c)) return { target: "trop petit", score: 0 };
-  if (c === "01") return { target: "acceptable", score: 10 };
-  if (["02", "03"].includes(c)) return { target: "idéal", score: 20 };
-  if (["11", "12"].includes(c)) return { target: "acceptable", score: 15 };
-  // 21+ : entreprise trop grosse, dirigeant inaccessible
-  return { target: "trop grand", score: 5 };
+  if (c === "01") return { target: "acceptable", score: 5 };
+  if (["02", "03"].includes(c)) return { target: "idéal", score: 30 };
+  if (c === "11") return { target: "acceptable", score: 12 };
+  return { target: "trop grand", score: 0 };
 }
 
 // === Géographie ===
@@ -177,6 +172,8 @@ export interface IcpResult {
   positives: string[];
   /** Raisons négatives (max 4) */
   negatives: string[];
+  /** Signaux commerciaux sectoriels : à vérifier, hors calcul du score. */
+  signals: string[];
   /** Détails par axe */
   details: {
     category: OpaleCategory;
@@ -188,6 +185,7 @@ export interface IcpResult {
     hasSite: boolean;
     siteVerified: boolean;
     active: boolean;
+    confidence: "élevée" | "partielle" | "faible";
   };
 }
 
@@ -200,6 +198,21 @@ export function evaluateIcp(input: IcpInput): IcpResult {
   const effectif = effectifIsTarget(input.trancheEffectif);
   const dirigeant = dirigeantAccess(input.codeNaf);
   const geo = geoScore(input.codePostal);
+  const confidenceCount = [
+    input.etatAdministratif != null,
+    input.ca != null,
+    input.trancheEffectif != null,
+    input.codePostal != null,
+    input.siteWebStatus != null && input.siteWebStatus !== "unknown",
+  ].filter(Boolean).length;
+  const confidence =
+    confidenceCount >= 4 ? "élevée" : confidenceCount >= 2 ? "partielle" : "faible";
+  const signals =
+    dirigeant === "direct"
+      ? ["Accès au décideur potentiellement plus direct — signal sectoriel à confirmer"]
+      : dirigeant === "filtre"
+        ? ["Accès au décideur à vérifier — signal sectoriel, non factuel"]
+        : [];
 
   // === Scoring ===
   let score = 0;
@@ -213,6 +226,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
       verdict: "hors-cible",
       positives: [],
       negatives: ["Entreprise cessée"],
+      signals,
       details: {
         category,
         caOk: false,
@@ -223,6 +237,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
         hasSite,
         siteVerified,
         active,
+        confidence,
       },
     };
   }
@@ -234,6 +249,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
       verdict: "hors-cible",
       positives: [],
       negatives: ["Secteur exclu (service public, ménage employeur, extraterritorial)"],
+      signals,
       details: {
         category,
         caOk: false,
@@ -244,59 +260,45 @@ export function evaluateIcp(input: IcpInput): IcpResult {
         hasSite,
         siteVerified,
         active,
+        confidence,
       },
     };
   }
 
-  // CA : 40 points
-  const seuil = caSeuilFor(input.sectionNaf);
-  const caOk = input.ca != null && input.ca >= seuil && input.ca <= CA_MAX;
-  if (input.ca == null) {
-    // CA inconnu : on neutralise, on ne pénalise pas
-    score += 15;
-  } else if (caOk) {
-    score += 40;
-    positives.push(
-      `CA ${formatCompact(input.ca)} ≥ ${formatCompact(seuil)} (${category === "services" ? "services" : "produits"})`
-    );
-  } else if (input.ca > CA_MAX) {
-    negatives.push(`CA ${formatCompact(input.ca)} > ${formatCompact(CA_MAX)} (dirigeant inaccessible)`);
-  } else {
-    negatives.push(`CA ${formatCompact(input.ca)} < seuil ${formatCompact(seuil)}`);
+  // CA : repère Opale 300–800 k€ lorsque la donnée est réellement connue.
+  const caOk = input.ca != null && input.ca >= 300_000 && input.ca <= 800_000;
+  if (caOk) {
+    score += 30;
+    positives.push(`CA dans le repère Opale (${formatCompact(input.ca!)})`);
+  } else if (input.ca != null) {
+    negatives.push(`CA hors repère Opale (${formatCompact(input.ca)})`);
   }
 
   // Effectif : 20 points
   score += effectif.score;
   if (effectif.target === "idéal") {
-    positives.push("Effectif idéal (3-9 salariés)");
+    positives.push("Cœur de cible : 3-9 salariés");
   } else if (effectif.target === "acceptable") {
-    positives.push("Effectif acceptable");
+    positives.push(
+      input.trancheEffectif === "11"
+        ? "10-19 salariés : vérifier si l’entreprise est sous 16"
+        : "Effectif à considérer",
+    );
   } else if (effectif.target === "trop petit") {
     negatives.push("Effectif 0-1 (hors cible)");
   } else if (effectif.target === "trop grand") {
-    negatives.push("Effectif 50+ (dirigeant filtré)");
+    negatives.push("Effectif au-dessus du cœur de cible Opale");
   }
 
-  // Site web : 15 points + bonus commercial
+  // Site réellement connu : il facilite l'audit, sans présumer de sa qualité.
   if (siteVerified) {
-    score += 15;
-    positives.push("Domaine vérifié (collecte possible)");
+    score += 10;
+    positives.push("Site vérifié : audit possible");
   } else if (hasSite) {
     score += 5;
   }
 
-  // Dirigeant : 15 points
-  if (dirigeant === "direct") {
-    score += 15;
-    positives.push("Dirigeant typiquement accessible");
-  } else if (dirigeant === "filtre") {
-    score += 2;
-    negatives.push("Secrétaire filtrante probable (cabinet, cabinet médical)");
-  } else {
-    score += 8;
-  }
-
-  // Géo : 10 points
+  // Géo : critère factuel de proximité.
   score += geo.score;
   if (geo.zone === "HDF") {
     positives.push("Hauts-de-France (priorité Opale)");
@@ -304,9 +306,9 @@ export function evaluateIcp(input: IcpInput): IcpResult {
 
   // === Verdict ===
   let verdict: IcpResult["verdict"];
-  if (score >= 75) verdict = "prioritaire";
-  else if (score >= 55) verdict = "cible";
-  else if (score >= 35) verdict = "a-tenter";
+  if (score >= 60) verdict = "prioritaire";
+  else if (score >= 35) verdict = "cible";
+  else if (score >= 15) verdict = "a-tenter";
   else verdict = "hors-cible";
 
   return {
@@ -314,6 +316,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
     verdict,
     positives: positives.slice(0, 4),
     negatives: negatives.slice(0, 4),
+    signals,
     details: {
       category,
       caOk,
@@ -324,6 +327,7 @@ export function evaluateIcp(input: IcpInput): IcpResult {
       hasSite,
       siteVerified,
       active,
+      confidence,
     },
   };
 }
@@ -334,7 +338,7 @@ export const VERDICT_META: Record<
   { label: string; color: string; badgeClass: string }
 > = {
   prioritaire: {
-    label: "Prospect prioritaire",
+    label: "Très intéressant",
     color: "#10b981", // emerald-500
     badgeClass: "border-emerald-500/50 bg-emerald-500/15 text-emerald-300",
   },
@@ -344,12 +348,12 @@ export const VERDICT_META: Record<
     badgeClass: "border-violet-500/50 bg-violet-500/15 text-violet-300",
   },
   "a-tenter": {
-    label: "À tenter",
+    label: "À analyser",
     color: "#f59e0b", // amber-500
     badgeClass: "border-amber-500/50 bg-amber-500/15 text-amber-300",
   },
   "hors-cible": {
-    label: "Hors cible",
+    label: "Faible priorité",
     color: "#6b7280", // gray-500
     badgeClass: "border-muted text-muted-foreground",
   },

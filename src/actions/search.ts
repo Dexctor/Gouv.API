@@ -16,6 +16,7 @@ import {
   matchesDirectSearch,
   rankCompanies,
 } from "@/lib/search-ranking";
+import type { PipelineStage, Priority, WebsiteStatus } from "@prisma/client";
 
 export interface EnrichedCompany extends CompanyResult {
   matchedLocation?: CompanySiege;
@@ -27,6 +28,13 @@ export interface EnrichedCompany extends CompanyResult {
     dateDernierBilan: Date | null;
   } | null;
   alreadyInPipeline?: boolean;
+  crm?: {
+    id: string;
+    stage: PipelineStage;
+    priority: Priority;
+    siteWeb: string | null;
+    siteWebStatus: WebsiteStatus;
+  } | null;
   lastCA?: {
     year: string;
     ca: number | null;
@@ -70,13 +78,22 @@ export async function searchAction(
       sirens.length
         ? prisma.prospect.findMany({
             where: { siren: { in: sirens } },
-            select: { siren: true },
+            select: {
+              id: true,
+              siren: true,
+              stage: true,
+              priority: true,
+              siteWeb: true,
+              siteWebStatus: true,
+            },
           })
         : Promise.resolve([]),
     ]);
 
     const cacheBySiren = new Map(cached.map((c) => [c.siren, c]));
-    const pipelineSet = new Set(existingProspects.map((p) => p.siren));
+    const prospectsBySiren = new Map(
+      existingProspects.map((prospect) => [prospect.siren, prospect]),
+    );
 
     const enriched: EnrichedCompany[] = raw.results.map((r) => {
       const apiCA = getLastCA(r);
@@ -91,7 +108,8 @@ export async function searchAction(
         ...r,
         matchedLocation: matchedLocation(r, filters),
         cache: dbCache,
-        alreadyInPipeline: pipelineSet.has(r.siren),
+        alreadyInPipeline: prospectsBySiren.has(r.siren),
+        crm: prospectsBySiren.get(r.siren) ?? null,
         lastCA: apiCA,
         caSource,
       };
